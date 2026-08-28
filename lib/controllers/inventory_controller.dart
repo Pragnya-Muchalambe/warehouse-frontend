@@ -71,8 +71,10 @@ class InventoryController extends ChangeNotifier {
     required String type,
     required List<CartItem> items,
     String? notes,
-    String? photo,
-    String? photoData,
+    String? bill,
+    String? billData,
+    String? proof,
+    String? proofData,
     required String user,
     InventorySection? section,
     String? factoryName,
@@ -84,8 +86,7 @@ class InventoryController extends ChangeNotifier {
     String? truckNumber,
   }) async {
     final isIncoming = type == LogType.incoming.label;
-    final isDepotDispatch =
-        !isIncoming && section == InventorySection.depot;
+    final isDepotDispatch = !isIncoming && section == InventorySection.depot;
 
     final updatedInventory = _inventory.map((invItem) {
       final matches = items.where((i) => i.id == invItem.id).toList();
@@ -111,7 +112,8 @@ class InventoryController extends ChangeNotifier {
         final materials = f.materials.map((m) {
           final matches = items.where((i) => i.id == m.id).toList();
           if (matches.isEmpty) return m;
-          final delta = matches.fold<int>(0, (sum, i) => sum + i.quantityChange);
+          final delta =
+              matches.fold<int>(0, (sum, i) => sum + i.quantityChange);
           var newTotal = m.total;
           if (isIncoming) newTotal += delta;
           if (!isIncoming) newTotal -= delta;
@@ -129,8 +131,10 @@ class InventoryController extends ChangeNotifier {
       user: user,
       items: items.map((i) => i.copyWith()).toList(),
       notes: notes,
-      photo: photo != null ? '[PROOF_ATTACHED.jpg]' : null,
-      photoData: photoData,
+      bill: bill,
+      billData: billData,
+      proof: proof,
+      proofData: proofData,
       section: section,
       factoryName: factoryName,
       person: person,
@@ -195,6 +199,10 @@ class InventoryController extends ChangeNotifier {
       oldItems: target.items.map((i) => i.copyWith()).toList(),
       items: updatedItems.map((i) => i.copyWith()).toList(),
       notes: 'Edited transaction $logId',
+      bill: target.bill,
+      billData: target.billData,
+      proof: target.proof,
+      proofData: target.proofData,
       section: target.section,
       factoryName: target.factoryName,
     );
@@ -275,8 +283,7 @@ class InventoryController extends ChangeNotifier {
   }) async {
     final pl = id.trim();
     if (pl.isEmpty) return false;
-    if (_inventory.any(
-        (i) => i.id.trim().toLowerCase() == pl.toLowerCase())) {
+    if (_inventory.any((i) => i.id.trim().toLowerCase() == pl.toLowerCase())) {
       return false;
     }
     _inventory = [
@@ -314,8 +321,7 @@ class InventoryController extends ChangeNotifier {
     final pl = id.trim();
     if (pl.isEmpty) return false;
     if (_inventory.any((i) =>
-        i.id.trim().toLowerCase() == pl.toLowerCase() &&
-        i.id != originalId)) {
+        i.id.trim().toLowerCase() == pl.toLowerCase() && i.id != originalId)) {
       return false;
     }
     var found = false;
@@ -491,8 +497,7 @@ class InventoryController extends ChangeNotifier {
     final request = requests[index];
     if (!request.isPending) return RequestDecision.alreadyProcessed;
 
-    final itemIndex =
-        _inventory.indexWhere((i) => i.id == request.itemId);
+    final itemIndex = _inventory.indexWhere((i) => i.id == request.itemId);
     if (itemIndex == -1) return RequestDecision.insufficientStock;
     final item = _inventory[itemIndex];
     if (item.available < request.quantity) {
@@ -607,8 +612,7 @@ class InventoryController extends ChangeNotifier {
 
     // Reverse only the inventory mutation caused by the original acceptance.
     if (request.status == 'Accepted') {
-      final itemIndex =
-          _inventory.indexWhere((i) => i.id == request.itemId);
+      final itemIndex = _inventory.indexWhere((i) => i.id == request.itemId);
       if (itemIndex != -1) {
         final item = _inventory[itemIndex];
         final restored = item.biIssued - request.quantity;

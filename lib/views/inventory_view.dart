@@ -22,8 +22,18 @@ enum _InventorySort {
 void _noop() {}
 
 const List<String> _months = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 String _formatDate(DateTime date) {
@@ -342,8 +352,8 @@ class _InventoryViewState extends State<InventoryView> {
         validatePl: (value) {
           final v = value.trim().toLowerCase();
           if (v.isEmpty) return null;
-          return _controller.inventory.any((i) =>
-                  i.id.trim().toLowerCase() == v && i.id != item.id)
+          return _controller.inventory
+                  .any((i) => i.id.trim().toLowerCase() == v && i.id != item.id)
               ? 'PL Number already exists'
               : null;
         },
@@ -385,9 +395,8 @@ class _InventoryViewState extends State<InventoryView> {
         validatePl: (value) {
           final v = value.trim().toLowerCase();
           if (v.isEmpty) return null;
-          return factory.materials.any((m) =>
-                  m.id != material.id &&
-                  m.id.trim().toLowerCase() == v)
+          return factory.materials.any(
+                  (m) => m.id != material.id && m.id.trim().toLowerCase() == v)
               ? 'PL Number already exists in this factory'
               : null;
         },
@@ -427,8 +436,7 @@ class _InventoryViewState extends State<InventoryView> {
         validatePl: (value) {
           final v = value.trim().toLowerCase();
           if (v.isEmpty) return null;
-          return factory.materials
-                  .any((m) => m.id.trim().toLowerCase() == v)
+          return factory.materials.any((m) => m.id.trim().toLowerCase() == v)
               ? 'PL Number already exists in this factory'
               : null;
         },
@@ -482,12 +490,13 @@ class _InventoryViewState extends State<InventoryView> {
   Widget _buildHeader() {
     final openFactory = _openFactory;
     final isFactoryMaterials = openFactory != null;
-    final isFactoryList =
-        !isFactoryMaterials && _controller.activeSection == InventorySection.sleeper;
+    final isFactoryList = !isFactoryMaterials &&
+        _controller.activeSection == InventorySection.sleeper;
     // Search/sort/frequent apply to the Depot material list and to the
     // materials of the currently open factory; not to the factory list page.
     final showSearchAndFilters =
-        _controller.activeSection == InventorySection.depot || isFactoryMaterials;
+        _controller.activeSection == InventorySection.depot ||
+            isFactoryMaterials;
 
     return Container(
       decoration: const BoxDecoration(
@@ -500,70 +509,89 @@ class _InventoryViewState extends State<InventoryView> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      isFactoryMaterials ? openFactory.name : 'LIVE INVENTORY',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: -0.5,
-                        color: kInk,
-                      ),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final title = Text(
+                    isFactoryMaterials ? openFactory.name : 'LIVE INVENTORY',
+                    maxLines: constraints.maxWidth < 600 ? 2 : 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: -0.5,
+                      color: kInk,
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (isFactoryMaterials)
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
+                  );
+                  final actions = <Widget>[
+                    if (isFactoryMaterials && _canManage)
+                      BrutalButton(
+                        label: 'ADD NEW MATERIALS - SLEEPER',
+                        icon: Icons.add,
+                        iconSize: 16,
+                        filled: true,
+                        allowLabelWrap: true,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        onPressed: () =>
+                            _openAddFactoryMaterialSheet(openFactory),
+                      ),
+                    if (isFactoryMaterials)
+                      BrutalButton(
+                        label: 'BACK TO SLEEPER',
+                        icon: Icons.arrow_back,
+                        iconSize: 16,
+                        allowLabelWrap: true,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        onPressed: _closeFactory,
+                      ),
+                    if (!isFactoryMaterials && isFactoryList && _canManage)
+                      BrutalButton(
+                        label: 'ADD FACTORY',
+                        icon: Icons.add_business_outlined,
+                        iconSize: 16,
+                        filled: true,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        onPressed: _openAddFactorySheet,
+                      ),
+                    if (!isFactoryMaterials && !isFactoryList && _canManage)
+                      BrutalButton(
+                        label: 'ADD MATERIAL',
+                        icon: Icons.add,
+                        iconSize: 16,
+                        filled: true,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        onPressed: _openAddSheet,
+                      ),
+                  ];
+
+                  if (isFactoryMaterials && constraints.maxWidth < 600) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (_canManage)
-                          BrutalButton(
-                            label: 'ADD NEW MATERIALS - SLEEPER',
-                            icon: Icons.add,
-                            iconSize: 16,
-                            filled: true,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            onPressed: () =>
-                                _openAddFactoryMaterialSheet(openFactory),
-                          ),
-                        BrutalButton(
-                          label: 'BACK TO SLEEPER',
-                          icon: Icons.arrow_back,
-                          iconSize: 16,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          onPressed: _closeFactory,
+                        title,
+                        const SizedBox(height: 10),
+                        Wrap(spacing: 8, runSpacing: 8, children: actions),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: title),
+                      if (actions.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: actions,
                         ),
                       ],
-                    )
-                  else if (isFactoryList && _canManage)
-                    BrutalButton(
-                      label: 'ADD FACTORY',
-                      icon: Icons.add_business_outlined,
-                      iconSize: 16,
-                      filled: true,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      onPressed: _openAddFactorySheet,
-                    )
-                  else if (_canManage)
-                    BrutalButton(
-                      label: 'ADD MATERIAL',
-                      icon: Icons.add,
-                      iconSize: 16,
-                      filled: true,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      onPressed: _openAddSheet,
-                    ),
-                ],
+                    ],
+                  );
+                },
               ),
               if (widget.showSectionTabs) ...[
                 const SizedBox(height: 14),
@@ -809,8 +837,7 @@ class _FrequentFilterChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.trending_up,
-                size: 14, color: active ? kSurface : kInk),
+            Icon(Icons.trending_up, size: 14, color: active ? kSurface : kInk),
             const SizedBox(width: 6),
             Text(
               'Most Frequently Searched',
@@ -965,9 +992,8 @@ class _MaterialCardState extends State<_MaterialCard> {
                         height: 1.35,
                         letterSpacing: -0.2,
                         color: kInk,
-                        decoration: isAvailable
-                            ? null
-                            : TextDecoration.lineThrough,
+                        decoration:
+                            isAvailable ? null : TextDecoration.lineThrough,
                         decorationColor: kInk,
                       ),
                     ),
@@ -1003,7 +1029,8 @@ class _StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = available ? kGreen : kRed;
-    final background = available ? const Color(0xFFE8F5E9) : const Color(0xFFFDECEA);
+    final background =
+        available ? const Color(0xFFE8F5E9) : const Color(0xFFFDECEA);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
@@ -1216,7 +1243,8 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         child: Form(
@@ -1284,7 +1312,8 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
                 validator: (v) => _validateQuantity(v, 'Incoming'),
               ),
               const SizedBox(height: 16),
-              const MonoLabel('Expected Availability Date', weight: FontWeight.w600),
+              const MonoLabel('Expected Availability Date',
+                  weight: FontWeight.w600),
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -1306,8 +1335,7 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
                           color: kSurface,
                           border: Border.all(color: kBorderDark),
                         ),
-                        child:
-                            const Icon(Icons.close, size: 14, color: kInk),
+                        child: const Icon(Icons.close, size: 14, color: kInk),
                       ),
                     ),
                   ],
@@ -1324,9 +1352,8 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
                   Expanded(
                     child: BrutalButton(
                       label: 'CANCEL',
-                      onPressed: _saving
-                          ? null
-                          : () => Navigator.of(context).pop(),
+                      onPressed:
+                          _saving ? null : () => Navigator.of(context).pop(),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1377,8 +1404,7 @@ class _SectionPicker extends StatelessWidget {
               ),
             ),
           ),
-          if (section != InventorySection.values.last)
-            const SizedBox(width: 8),
+          if (section != InventorySection.values.last) const SizedBox(width: 8),
         ],
       ],
     );
@@ -1546,9 +1572,8 @@ class _FactoryMaterialCardState extends State<_FactoryMaterialCard> {
                         height: 1.35,
                         letterSpacing: -0.2,
                         color: kInk,
-                        decoration: isAvailable
-                            ? null
-                            : TextDecoration.lineThrough,
+                        decoration:
+                            isAvailable ? null : TextDecoration.lineThrough,
                         decorationColor: kInk,
                       ),
                     ),
@@ -1702,8 +1727,7 @@ class _FactoryFormSheetState extends State<_FactoryFormSheet> {
                 ),
               ),
               InkWell(
-                onTap:
-                    _entries.length > 1 ? () => _removeEntry(index) : null,
+                onTap: _entries.length > 1 ? () => _removeEntry(index) : null,
                 child: Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
@@ -1762,7 +1786,8 @@ class _FactoryFormSheetState extends State<_FactoryFormSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         child: Form(
@@ -1818,25 +1843,37 @@ class _FactoryFormSheetState extends State<_FactoryFormSheet> {
                 if (i != _entries.length - 1) const SizedBox(height: 12),
               ],
               const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: BrutalButton(
-                      label: 'CANCEL',
-                      onPressed: _saving
-                          ? null
-                          : () => Navigator.of(context).pop(),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: BrutalButton(
-                      label: 'CREATE FACTORY',
-                      filled: true,
-                      onPressed: _saving ? null : _submit,
-                    ),
-                  ),
-                ],
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final cancel = BrutalButton(
+                    label: 'CANCEL',
+                    onPressed:
+                        _saving ? null : () => Navigator.of(context).pop(),
+                  );
+                  final create = BrutalButton(
+                    label: 'CREATE FACTORY',
+                    filled: true,
+                    allowLabelWrap: true,
+                    onPressed: _saving ? null : _submit,
+                  );
+                  if (constraints.maxWidth < 340) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        cancel,
+                        const SizedBox(height: 12),
+                        create,
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: cancel),
+                      const SizedBox(width: 12),
+                      Expanded(child: create),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -1956,8 +1993,7 @@ class _IncomingLine extends StatelessWidget {
     this.emphasized = false,
   });
 
-  bool get _visible =>
-      incomingQuantity > 0 || purchaseOrderStatus.hasIncoming;
+  bool get _visible => incomingQuantity > 0 || purchaseOrderStatus.hasIncoming;
 
   @override
   Widget build(BuildContext context) {
@@ -2131,8 +2167,8 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
         TextEditingController(text: material?.total.toString() ?? '');
     _biController =
         TextEditingController(text: material?.biIssued.toString() ?? '0');
-    _incomingController =
-        TextEditingController(text: material?.incomingQuantity.toString() ?? '0');
+    _incomingController = TextEditingController(
+        text: material?.incomingQuantity.toString() ?? '0');
     _expectedDate = material?.expectedAvailabilityDate;
     _poStatus = material?.purchaseOrderStatus ?? PurchaseOrderStatus.none;
   }
@@ -2192,7 +2228,8 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
     if (!ok) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Duplicate PL Number: ${_plController.text.trim()}')),
+        SnackBar(
+            content: Text('Duplicate PL Number: ${_plController.text.trim()}')),
       );
       return;
     }
@@ -2202,7 +2239,8 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         child: Form(
@@ -2238,9 +2276,8 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
               BrutalTextField(
                 label: 'Material Name / Description',
                 controller: _nameController,
-                validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'Name is required'
-                    : null,
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Name is required' : null,
               ),
               const SizedBox(height: 16),
               Row(
@@ -2312,9 +2349,8 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
                   Expanded(
                     child: BrutalButton(
                       label: 'CANCEL',
-                      onPressed: _saving
-                          ? null
-                          : () => Navigator.of(context).pop(),
+                      onPressed:
+                          _saving ? null : () => Navigator.of(context).pop(),
                     ),
                   ),
                   const SizedBox(width: 12),

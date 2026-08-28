@@ -264,17 +264,17 @@ class _LogCard extends StatelessWidget {
                   ),
                 ],
               ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      MonoLabel(log.user, size: 11, weight: FontWeight.w700),
-                      const SizedBox(height: 4),
-                      Text(
-                        'ID: ${_shortId(log.id)}',
-                        style: monoStyle(size: 9),
-                      ),
-                    ],
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  MonoLabel(log.user, size: 11, weight: FontWeight.w700),
+                  const SizedBox(height: 4),
+                  Text(
+                    'ID: ${_shortId(log.id)}',
+                    style: monoStyle(size: 9),
                   ),
+                ],
+              ),
             ],
           ),
           if (log.notes != null && log.notes!.isNotEmpty) ...[
@@ -352,41 +352,26 @@ class _LogCard extends StatelessWidget {
           for (var i = 0; i < log.items.length; i++)
             _buildItemRow(log.items[i], i),
           const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              if (log.photo != null || log.photoData != null)
-                InkWell(
-                  onTap: log.photoData != null ? () => _showProof(context) : null,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: kPaper,
-                      border: Border.all(color: kBorderDark),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          log.photoData != null
-                              ? Icons.visibility_outlined
-                              : Icons.photo_camera_outlined,
-                          size: 12,
-                          color: kInkMuted,
-                        ),
-                        const SizedBox(width: 4),
-                        MonoLabel(
-                          log.photoData != null
-                              ? 'View Proof'
-                              : 'Proof Attached',
-                          size: 9,
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                const SizedBox.shrink(),
+              if (log.bill != null || log.billData != null)
+                _buildAttachment(
+                  context,
+                  label: 'Bill',
+                  fileName: log.bill,
+                  data: log.billData,
+                ),
+              if (log.proof != null || log.proofData != null)
+                _buildAttachment(
+                  context,
+                  label: 'Proof',
+                  fileName: log.proof,
+                  data: log.proofData,
+                ),
               if (canEdit &&
                   (log.type == LogType.incoming ||
                       log.type == LogType.dispatch))
@@ -417,7 +402,8 @@ class _LogCard extends StatelessWidget {
                             children: [
                               Icon(Icons.edit_outlined, size: 12, color: kInk),
                               SizedBox(width: 4),
-                              MonoLabel('Edit', size: 10, weight: FontWeight.w600),
+                              MonoLabel('Edit',
+                                  size: 10, weight: FontWeight.w600),
                             ],
                           ),
                         ),
@@ -429,12 +415,63 @@ class _LogCard extends StatelessWidget {
     );
   }
 
-  void _showProof(BuildContext context) {
-    final photoData = log.photoData;
-    if (photoData == null || photoData.isEmpty) return;
+  Widget _buildAttachment(
+    BuildContext context, {
+    required String label,
+    required String? fileName,
+    required String? data,
+  }) {
+    return InkWell(
+      onTap: data == null
+          ? null
+          : () => _showAttachment(
+                context,
+                label: label,
+                fileName: fileName,
+                data: data,
+              ),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 240),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: kPaper,
+          border: Border.all(color: kBorderDark),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              data != null
+                  ? Icons.visibility_outlined
+                  : Icons.photo_camera_outlined,
+              size: 12,
+              color: kInkMuted,
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                '$label: ${fileName ?? 'Attached image'}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: monoStyle(size: 9, color: kInk),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAttachment(
+    BuildContext context, {
+    required String label,
+    required String? fileName,
+    required String data,
+  }) {
+    if (data.isEmpty) return;
     final Uint8List bytes;
     try {
-      bytes = base64Decode(photoData);
+      bytes = base64Decode(data);
     } catch (_) {
       return;
     }
@@ -449,7 +486,12 @@ class _LogCard extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const MonoLabel('Proof / Bill', weight: FontWeight.w600),
+              Text(
+                '$label: ${fileName ?? 'Attached image'}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: monoStyle(size: 11, weight: FontWeight.w600),
+              ),
               const SizedBox(height: 12),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 420),
@@ -459,7 +501,8 @@ class _LogCard extends StatelessWidget {
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) => const Padding(
                       padding: EdgeInsets.all(24),
-                      child: Center(child: MonoLabel('Unable to display image')),
+                      child:
+                          Center(child: MonoLabel('Unable to display image')),
                     ),
                   ),
                 ),

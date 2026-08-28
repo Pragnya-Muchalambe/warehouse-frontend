@@ -51,6 +51,7 @@ class BrutalButton extends StatelessWidget {
   final bool filled;
   final TextStyle? labelStyle;
   final EdgeInsetsGeometry padding;
+  final bool allowLabelWrap;
 
   const BrutalButton({
     super.key,
@@ -61,6 +62,7 @@ class BrutalButton extends StatelessWidget {
     this.filled = false,
     this.labelStyle,
     this.padding = const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+    this.allowLabelWrap = false,
   });
 
   @override
@@ -80,17 +82,33 @@ class BrutalButton extends StatelessWidget {
                 Icon(icon, size: iconSize, color: filled ? kSurface : kInk),
                 const SizedBox(width: 8),
               ],
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: labelStyle ??
-                    monoStyle(
-                      size: 12,
-                      weight: FontWeight.w700,
-                      color: filled ? kSurface : kInk,
-                      letterSpacing: 1.5,
-                    ),
-              ),
+              if (allowLabelWrap)
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                    style: labelStyle ??
+                        monoStyle(
+                          size: 12,
+                          weight: FontWeight.w700,
+                          color: filled ? kSurface : kInk,
+                          letterSpacing: 1.5,
+                        ),
+                  ),
+                )
+              else
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: labelStyle ??
+                      monoStyle(
+                        size: 12,
+                        weight: FontWeight.w700,
+                        color: filled ? kSurface : kInk,
+                        letterSpacing: 1.5,
+                      ),
+                ),
             ],
           ),
         ),
@@ -353,8 +371,10 @@ class _DashedBorderPainter extends CustomPainter {
       ..strokeWidth = width;
     final path = Path();
     _dash(canvas, paint, Offset.zero, Offset(size.width, 0), path);
-    _dash(canvas, paint, Offset(size.width, 0), Offset(size.width, size.height), path);
-    _dash(canvas, paint, Offset(size.width, size.height), Offset(0, size.height), path);
+    _dash(canvas, paint, Offset(size.width, 0), Offset(size.width, size.height),
+        path);
+    _dash(canvas, paint, Offset(size.width, size.height),
+        Offset(0, size.height), path);
     _dash(canvas, paint, Offset(0, size.height), Offset.zero, path);
   }
 
@@ -362,9 +382,9 @@ class _DashedBorderPainter extends CustomPainter {
     final total = (b - a).distance;
     var t = 0.0;
     while (t < total) {
-      path.moveTo(Offset.lerp(a, b, t / total)!.dx, Offset.lerp(a, b, t / total)!.dy);
-      path.lineTo(
-          Offset.lerp(a, b, (t + dash) / total)!.dx,
+      path.moveTo(
+          Offset.lerp(a, b, t / total)!.dx, Offset.lerp(a, b, t / total)!.dy);
+      path.lineTo(Offset.lerp(a, b, (t + dash) / total)!.dx,
           Offset.lerp(a, b, (t + dash) / total)!.dy);
       t += dash + gap;
     }

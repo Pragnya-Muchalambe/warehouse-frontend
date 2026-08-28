@@ -63,7 +63,10 @@ class TransactionLog {
   final String user;
   final List<CartItem> items;
   final String? notes;
-  final String? photo;
+  final String? bill;
+  final String? billData;
+  final String? proof;
+  final String? proofData;
   final String? refLogId;
   final List<CartItem>? oldItems;
   final InventorySection? section;
@@ -75,10 +78,6 @@ class TransactionLog {
   final String? dateLeaving;
   final String? truckNumber;
 
-  /// Optional base64-encoded proof image so the Audit view can display it.
-  /// Only stored when the original capture is small enough (<= ~1MB).
-  final String? photoData;
-
   const TransactionLog({
     required this.id,
     required this.timestamp,
@@ -86,7 +85,10 @@ class TransactionLog {
     required this.user,
     required this.items,
     this.notes,
-    this.photo,
+    this.bill,
+    this.billData,
+    this.proof,
+    this.proofData,
     this.refLogId,
     this.oldItems,
     this.section,
@@ -97,7 +99,6 @@ class TransactionLog {
     this.dateRequested,
     this.dateLeaving,
     this.truckNumber,
-    this.photoData,
   });
 
   Map<String, dynamic> toJson() => {
@@ -107,8 +108,10 @@ class TransactionLog {
         'user': user,
         'items': items.map((i) => i.toJson()).toList(),
         if (notes != null) 'notes': notes,
-        if (photo != null) 'photo': photo,
-        if (photoData != null) 'photoData': photoData,
+        if (bill != null) 'bill': bill,
+        if (billData != null) 'billData': billData,
+        if (proof != null) 'proof': proof,
+        if (proofData != null) 'proofData': proofData,
         if (refLogId != null) 'refLogId': refLogId,
         if (oldItems != null)
           'oldItems': oldItems!.map((i) => i.toJson()).toList(),
@@ -133,7 +136,12 @@ class TransactionLog {
           .map((e) => CartItem.fromJson(e as Map<String, dynamic>))
           .toList(),
       notes: json['notes'] as String?,
-      photo: json['photo'] as String?,
+      bill: json['bill'] as String?,
+      billData: json['billData'] as String?,
+      // The former combined attachment represented proof when no typed fields
+      // existed. Keep it as Proof when loading locally persisted legacy logs.
+      proof: json['proof'] as String? ?? json['photo'] as String?,
+      proofData: json['proofData'] as String? ?? json['photoData'] as String?,
       refLogId: json['refLogId'] as String?,
       oldItems: (json['oldItems'] as List?)
           ?.map((e) => CartItem.fromJson(e as Map<String, dynamic>))
@@ -148,7 +156,6 @@ class TransactionLog {
       dateRequested: json['dateRequested'] as String?,
       dateLeaving: json['dateLeaving'] as String?,
       truckNumber: json['truckNumber'] as String?,
-      photoData: json['photoData'] as String?,
     );
   }
 }

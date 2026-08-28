@@ -16,8 +16,18 @@ import '../widgets/section_tabs.dart';
 enum _TransactionForm { incoming, dispatch }
 
 const List<String> _months = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 String _formatTimestamp(DateTime dt) {
@@ -33,8 +43,10 @@ class TransactionsView extends StatefulWidget {
     required String type,
     required List<CartItem> items,
     String? notes,
-    String? photo,
-    String? photoData,
+    String? bill,
+    String? billData,
+    String? proof,
+    String? proofData,
     required String user,
     InventorySection? section,
     String? factoryName,
@@ -72,8 +84,10 @@ class _TransactionsViewState extends State<TransactionsView> {
   DateTime? _dateOfArrival;
   DateTime? _dateRequested;
   DateTime? _dateLeaving;
-  XFile? _photo;
-  Uint8List? _photoBytes;
+  XFile? _bill;
+  Uint8List? _billBytes;
+  XFile? _proof;
+  Uint8List? _proofBytes;
   String _searchTerm = '';
   bool _submitting = false;
 
@@ -83,10 +97,9 @@ class _TransactionsViewState extends State<TransactionsView> {
   bool get _isFactoryScope =>
       _section == InventorySection.sleeper && _factoryName != null;
 
-  String get _scopeLabel =>
-      _section == InventorySection.depot
-          ? 'DEPOT'
-          : 'SLEEPER${_factoryName != null ? ' · $_factoryName' : ''}';
+  String get _scopeLabel => _section == InventorySection.depot
+      ? 'DEPOT'
+      : 'SLEEPER${_factoryName != null ? ' · $_factoryName' : ''}';
 
   WarehouseFactory? get _scopeFactory {
     if (_factoryName == null) return null;
@@ -138,8 +151,10 @@ class _TransactionsViewState extends State<TransactionsView> {
       _dateOfArrival = null;
       _dateRequested = null;
       _dateLeaving = null;
-      _photo = null;
-      _photoBytes = null;
+      _bill = null;
+      _billBytes = null;
+      _proof = null;
+      _proofBytes = null;
       _searchTerm = '';
       _submitting = false;
     });
@@ -228,7 +243,7 @@ class _TransactionsViewState extends State<TransactionsView> {
     setState(() => _selectedItems.removeWhere((i) => i.id == id));
   }
 
-  Future<void> _pickPhoto() async {
+  Future<void> _pickAttachment({required bool isBill}) async {
     final picker = ImagePicker();
     XFile? file;
     try {
@@ -241,10 +256,27 @@ class _TransactionsViewState extends State<TransactionsView> {
       final bytes = await file.readAsBytes();
       if (!mounted) return;
       setState(() {
-        _photo = file;
-        _photoBytes = bytes;
+        if (isBill) {
+          _bill = file;
+          _billBytes = bytes;
+        } else {
+          _proof = file;
+          _proofBytes = bytes;
+        }
       });
     }
+  }
+
+  void _removeAttachment({required bool isBill}) {
+    setState(() {
+      if (isBill) {
+        _bill = null;
+        _billBytes = null;
+      } else {
+        _proof = null;
+        _proofBytes = null;
+      }
+    });
   }
 
   Future<void> _pickDate(
@@ -284,8 +316,12 @@ class _TransactionsViewState extends State<TransactionsView> {
       _showMessage('All items must have a quantity of 1 or more.');
       return;
     }
-    if (_photo == null) {
-      _showMessage('Bill / proof is mandatory. Upload it at the top.');
+    if (_bill == null) {
+      _showMessage('Bill is mandatory. Upload it at the top.');
+      return;
+    }
+    if (_proof == null) {
+      _showMessage('Proof is mandatory. Upload it at the top.');
       return;
     }
 
@@ -318,10 +354,8 @@ class _TransactionsViewState extends State<TransactionsView> {
         return;
       }
       for (final sel in _selectedItems) {
-        final stock = _scopeInventory
-            .where((i) => i.id == sel.id)
-            .firstOrNull
-            ?.available;
+        final stock =
+            _scopeInventory.where((i) => i.id == sel.id).firstOrNull?.available;
         if (stock != null && stock < sel.quantityChange) {
           _showMessage('Insufficient available stock for dispatch.');
           return;
@@ -329,20 +363,17 @@ class _TransactionsViewState extends State<TransactionsView> {
       }
     }
 
-    String? photoData;
-    final bytes = _photoBytes;
-    if (bytes != null && bytes.lengthInBytes <= 1024 * 1024) {
-      photoData = base64Encode(bytes);
-    }
+    final billData = _encodeAttachment(_billBytes);
+    final proofData = _encodeAttachment(_proofBytes);
 
     setState(() => _submitting = true);
     await widget.addTransaction(
-      type: isIncoming
-          ? LogType.incoming.label
-          : LogType.dispatch.label,
+      type: isIncoming ? LogType.incoming.label : LogType.dispatch.label,
       items: _selectedItems,
-      photo: _photo!.name,
-      photoData: photoData,
+      bill: _bill!.name,
+      billData: billData,
+      proof: _proof!.name,
+      proofData: proofData,
       user: widget.session.username,
       section: _section,
       factoryName: _isFactoryScope ? _factoryName : null,
@@ -356,6 +387,11 @@ class _TransactionsViewState extends State<TransactionsView> {
     if (!mounted) return;
     _resetForm();
     _showMessage('Transaction completed successfully.');
+  }
+
+  String? _encodeAttachment(Uint8List? bytes) {
+    if (bytes == null || bytes.lengthInBytes > 1024 * 1024) return null;
+    return base64Encode(bytes);
   }
 
   List<TransactionLog> _filteredLogs() {
@@ -425,26 +461,33 @@ class _TransactionsViewState extends State<TransactionsView> {
   Widget _buildChooser() {
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: MaxWidth(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            MonoLabel('SCOPE: $_scopeLabel', color: kGray400),
-            const SizedBox(height: 16),
-            _ChoiceButton(
-              icon: Icons.add,
-              label: 'New Incoming',
-              onTap: () =>
-                  setState(() => _activeForm = _TransactionForm.incoming),
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: MaxWidth(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  MonoLabel('SCOPE: $_scopeLabel', color: kGray400),
+                  const SizedBox(height: 16),
+                  _ChoiceButton(
+                    icon: Icons.add,
+                    label: 'New Incoming',
+                    onTap: () =>
+                        setState(() => _activeForm = _TransactionForm.incoming),
+                  ),
+                  const SizedBox(height: 24),
+                  _ChoiceButton(
+                    icon: Icons.remove,
+                    label: 'New Dispatch',
+                    onTap: () =>
+                        setState(() => _activeForm = _TransactionForm.dispatch),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 24),
-            _ChoiceButton(
-              icon: Icons.remove,
-              label: 'New Dispatch',
-              onTap: () =>
-                  setState(() => _activeForm = _TransactionForm.dispatch),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -466,88 +509,110 @@ class _TransactionsViewState extends State<TransactionsView> {
     );
   }
 
-  Widget _buildProofCard() {
-    final bytes = _photoBytes;
+  Widget _buildAttachmentCard({
+    required String label,
+    required XFile? file,
+    required Uint8List? bytes,
+    required VoidCallback onPick,
+    required VoidCallback onRemove,
+  }) {
     return BrutalCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const MonoLabel('UPLOAD BILL / PROOF *', weight: FontWeight.w600),
+          MonoLabel('UPLOAD ${label.toUpperCase()} *', weight: FontWeight.w600),
           const SizedBox(height: 12),
-          InkWell(
-            onTap: _pickPhoto,
-            child: bytes != null
-                ? Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: kBorderDark, width: 1),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ClipRect(
-                          child: Image.memory(
-                            bytes,
-                            height: 140,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              height: 140,
-                              color: kGray50,
-                              child: const Center(
-                                child: MonoLabel('Preview unavailable',
-                                    color: kGray400),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          decoration: const BoxDecoration(
-                            color: kInk,
-                            border: Border(
-                              top: BorderSide(color: kBorderDark, width: 1),
-                            ),
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(Icons.check_circle_outline,
-                                  size: 14, color: kSurface),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: MonoLabel(
-                                  'Bill / proof attached - tap to change',
-                                  size: 9,
-                                  color: kSurface,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                : Container(
-                    width: double.infinity,
-                    color: kGray50,
-                    child: const DashedBorder(
-                      color: kGray300,
-                      width: 2,
-                      padding: EdgeInsets.all(24),
-                      child: Column(
-                        children: [
-                          Icon(Icons.upload_file_outlined,
-                              size: 24, color: kGray400),
-                          SizedBox(height: 8),
-                          MonoLabel(
-                            'Tap to upload bill / proof image',
+          if (file != null && bytes != null)
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                border: Border.all(color: kBorderDark, width: 1),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ClipRect(
+                    child: Image.memory(
+                      bytes,
+                      height: 140,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        height: 140,
+                        color: kGray50,
+                        child: const Center(
+                          child: MonoLabel(
+                            'Preview unavailable',
                             color: kGray400,
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-          ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    color: kInk,
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.check_circle_outline,
+                          size: 14,
+                          color: kSurface,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            file.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: monoStyle(size: 9, color: kSurface),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _AttachmentAction(
+                          icon: Icons.refresh,
+                          tooltip: 'Replace $label',
+                          onTap: onPick,
+                        ),
+                        const SizedBox(width: 6),
+                        _AttachmentAction(
+                          icon: Icons.delete_outline,
+                          tooltip: 'Remove $label',
+                          onTap: onRemove,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            InkWell(
+              onTap: onPick,
+              child: Container(
+                width: double.infinity,
+                color: kGray50,
+                child: DashedBorder(
+                  color: kGray300,
+                  width: 2,
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      const Icon(
+                        Icons.upload_file_outlined,
+                        size: 24,
+                        color: kGray400,
+                      ),
+                      const SizedBox(height: 8),
+                      MonoLabel(
+                        'Tap to upload $label image',
+                        color: kGray400,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -564,8 +629,7 @@ class _TransactionsViewState extends State<TransactionsView> {
           ),
           const SizedBox(height: 12),
           BrutalTextInput(
-            controller:
-                isIncoming ? _personController : _requestedByController,
+            controller: isIncoming ? _personController : _requestedByController,
             label: isIncoming ? 'Person Who Sent Order' : 'Requested By',
             hint: isIncoming ? 'Sender / vendor name' : 'Who the items are for',
           ),
@@ -581,16 +645,14 @@ class _TransactionsViewState extends State<TransactionsView> {
               label: _dateOfArrival == null
                   ? 'SET DATE OF ARRIVAL'
                   : _formatDate(_dateOfArrival!),
-              onTap: () =>
-                  _pickDate(_dateOfArrival, (d) => _dateOfArrival = d),
+              onTap: () => _pickDate(_dateOfArrival, (d) => _dateOfArrival = d),
             ),
           ] else ...[
             _FormDateButton(
               label: _dateRequested == null
                   ? 'SET DATE REQUESTED'
                   : _formatDate(_dateRequested!),
-              onTap: () =>
-                  _pickDate(_dateRequested, (d) => _dateRequested = d),
+              onTap: () => _pickDate(_dateRequested, (d) => _dateRequested = d),
             ),
             const SizedBox(height: 12),
             _FormDateButton(
@@ -624,21 +686,29 @@ class _TransactionsViewState extends State<TransactionsView> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isIncoming ? 'RECEIVE GOODS' : 'DISPATCH GOODS',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: -0.5,
-                      color: kSurface,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isIncoming ? 'RECEIVE GOODS' : 'DISPATCH GOODS',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: -0.5,
+                        color: kSurface,
+                      ),
                     ),
-                  ),
-                  MonoLabel(_scopeLabel, size: 9, color: kGray400),
-                ],
+                    Text(
+                      _scopeLabel.toUpperCase(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: monoStyle(size: 9, color: kGray400),
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               InkWell(
                 onTap: _resetForm,
                 child: Container(
@@ -659,7 +729,21 @@ class _TransactionsViewState extends State<TransactionsView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _buildProofCard(),
+                  _buildAttachmentCard(
+                    label: 'Bill',
+                    file: _bill,
+                    bytes: _billBytes,
+                    onPick: () => _pickAttachment(isBill: true),
+                    onRemove: () => _removeAttachment(isBill: true),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildAttachmentCard(
+                    label: 'Proof',
+                    file: _proof,
+                    bytes: _proofBytes,
+                    onPick: () => _pickAttachment(isBill: false),
+                    onRemove: () => _removeAttachment(isBill: false),
+                  ),
                   const SizedBox(height: 16),
                   _buildDetailsCard(isIncoming),
                   const SizedBox(height: 16),
@@ -676,8 +760,8 @@ class _TransactionsViewState extends State<TransactionsView> {
                           controller: _searchController,
                           hint: 'SEARCH INVENTORY...',
                           uppercase: true,
-                          suffixIcon:
-                              const Icon(Icons.search, size: 16, color: kGray400),
+                          suffixIcon: const Icon(Icons.search,
+                              size: 16, color: kGray400),
                           onChanged: (v) => setState(() => _searchTerm = v),
                         ),
                         if (_searchTerm.isNotEmpty) ...[
@@ -716,8 +800,8 @@ class _TransactionsViewState extends State<TransactionsView> {
                                     ),
                                     const SizedBox(width: 12),
                                     if (item.max != null)
-                                      MonoLabel(
-                                          'Available: ${item.max}', size: 10),
+                                      MonoLabel('Available: ${item.max}',
+                                          size: 10),
                                   ],
                                 ),
                               ),
@@ -728,8 +812,8 @@ class _TransactionsViewState extends State<TransactionsView> {
                           const DashedBorder(
                             padding: EdgeInsets.all(16),
                             child: Center(
-                              child: MonoLabel('Cart is empty',
-                                  color: kGray400),
+                              child:
+                                  MonoLabel('Cart is empty', color: kGray400),
                             ),
                           )
                         else
@@ -772,8 +856,7 @@ class _TransactionsViewState extends State<TransactionsView> {
                                       contentPadding:
                                           const EdgeInsets.symmetric(
                                               vertical: 8, horizontal: 8),
-                                      onChanged: (v) =>
-                                          _updateQty(item.id, v),
+                                      onChanged: (v) => _updateQty(item.id, v),
                                     ),
                                   ),
                                   const SizedBox(width: 8),
@@ -782,8 +865,7 @@ class _TransactionsViewState extends State<TransactionsView> {
                                     child: Container(
                                       padding: const EdgeInsets.all(8),
                                       decoration: BoxDecoration(
-                                        border:
-                                            Border.all(color: kBorderDark),
+                                        border: Border.all(color: kBorderDark),
                                       ),
                                       child: const Icon(Icons.close,
                                           size: 14, color: kInk),
@@ -797,8 +879,7 @@ class _TransactionsViewState extends State<TransactionsView> {
                   ),
                   const SizedBox(height: 20),
                   BrutalButton(
-                    label:
-                        _submitting ? 'Submitting...' : 'Submit Transaction',
+                    label: _submitting ? 'Submitting...' : 'Submit Transaction',
                     filled: true,
                     padding: const EdgeInsets.all(16),
                     onPressed: _submitting ? null : _submit,
@@ -810,6 +891,32 @@ class _TransactionsViewState extends State<TransactionsView> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _AttachmentAction extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _AttachmentAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(icon, size: 16, color: kSurface),
+        ),
+      ),
     );
   }
 }
@@ -994,6 +1101,30 @@ class _ActionRecordCard extends StatelessWidget {
                 ],
               ),
             ),
+          if (log.bill != null ||
+              log.billData != null ||
+              log.proof != null ||
+              log.proofData != null) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (log.bill != null || log.billData != null)
+                  _RecordAttachment(
+                    label: 'Bill',
+                    fileName: log.bill,
+                    data: log.billData,
+                  ),
+                if (log.proof != null || log.proofData != null)
+                  _RecordAttachment(
+                    label: 'Proof',
+                    fileName: log.proof,
+                    data: log.proofData,
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -1011,6 +1142,102 @@ class _ActionRecordCard extends StatelessWidget {
       case LogType.edit:
         return 'OUT';
     }
+  }
+}
+
+class _RecordAttachment extends StatelessWidget {
+  final String label;
+  final String? fileName;
+  final String? data;
+
+  const _RecordAttachment({
+    required this.label,
+    required this.fileName,
+    required this.data,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: data == null ? null : () => _showPreview(context),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 260),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: kPaper,
+          border: Border.all(color: kBorderDark),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              data == null ? Icons.image_outlined : Icons.visibility_outlined,
+              size: 12,
+              color: kInkMuted,
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                '$label: ${fileName ?? 'Attached image'}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: monoStyle(size: 9, color: kInk),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPreview(BuildContext context) {
+    final encoded = data;
+    if (encoded == null || encoded.isEmpty) return;
+    final Uint8List bytes;
+    try {
+      bytes = base64Decode(encoded);
+    } catch (_) {
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: kSurface,
+        shape: const RoundedRectangleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '$label: ${fileName ?? 'Attached image'}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: monoStyle(size: 11, weight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 420),
+                child: Image.memory(
+                  bytes,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: MonoLabel('Unable to display image')),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              BrutalButton(
+                label: 'CLOSE',
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
