@@ -1,17 +1,21 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart';
 
 import '../controllers/inventory_controller.dart';
 import '../models/factory.dart';
 import '../models/inventory_item.dart';
 import '../models/transaction_log.dart';
+import '../models/viewer_request.dart';
+import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/request_service.dart';
+import '../services/transaction_file_picker.dart';
 import '../theme.dart';
 import '../widgets/brutal.dart';
-import '../widgets/section_tabs.dart';
+import '../widgets/attachment_preview.dart';
+import '../widgets/section_tabs.dart' show FactoryFilterChips;
 
 enum _TransactionForm { incoming, dispatch }
 
@@ -49,21 +53,33 @@ class TransactionsView extends StatefulWidget {
     String? proofData,
     required String user,
     InventorySection? section,
-    String? factoryName,
     String? person,
     String? comingFrom,
     String? dateOfArrival,
     String? dateRequested,
     String? dateLeaving,
     String? truckNumber,
+    Uint8List? billBytes,
+    Uint8List? proofBytes,
+    List<TransactionAttachment> proofs,
+    String? factoryId,
+    List<String> sourceRequestIds,
   }) addTransaction;
   final AuthSession session;
+  final InventorySection? fixedSection;
+  final String? initialFactoryId;
+  final TransactionFilePicker filePicker;
+  final RequestService? requestService;
 
   const TransactionsView({
     super.key,
     required this.controller,
     required this.addTransaction,
     required this.session,
+    this.fixedSection,
+    this.initialFactoryId,
+    this.filePicker = const PlatformTransactionFilePicker(),
+    this.requestService,
   });
 
   @override
@@ -71,8 +87,9 @@ class TransactionsView extends StatefulWidget {
 }
 
 class _TransactionsViewState extends State<TransactionsView> {
-  InventorySection _section = InventorySection.depot;
+  late InventorySection _section;
   String? _factoryName;
+  String? _factoryId;
   _TransactionForm? _activeForm;
   final List<CartItem> _selectedItems = [];
   final Map<String, TextEditingController> _qtyControllers = {};
@@ -84,27 +101,79 @@ class _TransactionsViewState extends State<TransactionsView> {
   DateTime? _dateOfArrival;
   DateTime? _dateRequested;
   DateTime? _dateLeaving;
-  XFile? _bill;
+  String? _bill;
   Uint8List? _billBytes;
-  XFile? _proof;
-  Uint8List? _proofBytes;
+  final List<TransactionAttachment> _proofs = [];
   String _searchTerm = '';
   bool _submitting = false;
+  bool _pickingBill = false;
+  bool _pickingProof = false;
+  TransactionLog? _createdTransaction;
+  late final RequestService _requestService;
+  List<ViewerRequest> _acceptedRequests = const [];
+  final Set<String> _sourceRequestIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _section = widget.fixedSection ?? InventorySection.depot;
+    _requestService = widget.requestService ?? RequestService();
+    _selectInitialFactory();
+    _loadAcceptedRequests();
+  }
+
+  Future<void> _loadAcceptedRequests() async {
+    try {
+      final requests = await _requestService.loadRequests();
+      if (!mounted) return;
+      setState(() {
+        _acceptedRequests = requests
+            .where((request) =>
+                request.status == 'Accepted' &&
+                request.relatedTransactionId == null)
+            .toList();
+      });
+    } catch (_) {
+      // Request linking is optional for transactions not fulfilling requests.
+    }
+  }
+
+  List<ViewerRequest> get _linkableRequests {
+    if (_activeForm != _TransactionForm.dispatch) return const [];
+    final itemIds = _selectedItems.map((item) => item.id).toSet();
+    final section = _section == InventorySection.sleeper ? 'Sleeper' : 'Depot';
+    return _acceptedRequests
+        .where((request) =>
+            request.section == section &&
+            (_section != InventorySection.sleeper ||
+                request.factoryId == _factoryId) &&
+            itemIds.contains(request.itemId))
+        .toList();
+  }
+
+  void _selectInitialFactory() {
+    final id = widget.initialFactoryId;
+    if (id == null || _section != InventorySection.sleeper) return;
+    final factory =
+        widget.controller.factories.where((f) => f.id == id).firstOrNull;
+    _factoryId = factory?.id;
+    _factoryName = factory?.name;
+  }
 
   bool get _canOperate =>
       widget.session.role == 'superadmin' || widget.session.role == 'admin';
 
   bool get _isFactoryScope =>
-      _section == InventorySection.sleeper && _factoryName != null;
+      _section == InventorySection.sleeper && _factoryId != null;
 
   String get _scopeLabel => _section == InventorySection.depot
       ? 'DEPOT'
       : 'SLEEPER${_factoryName != null ? ' · $_factoryName' : ''}';
 
   WarehouseFactory? get _scopeFactory {
-    if (_factoryName == null) return null;
+    if (_factoryId == null) return null;
     for (final factory in widget.controller.factories) {
-      if (factory.name == _factoryName) return factory;
+      if (factory.id == _factoryId) return factory;
     }
     return null;
   }
@@ -131,7 +200,9 @@ class _TransactionsViewState extends State<TransactionsView> {
   TextEditingController _qtyControllerFor(CartItem item) {
     return _qtyControllers.putIfAbsent(
       item.id,
-      () => TextEditingController(text: '${item.quantityChange}'),
+      () => TextEditingController(
+        text: item.quantityChange > 0 ? '${item.quantityChange}' : '',
+      ),
     );
   }
 
@@ -153,26 +224,23 @@ class _TransactionsViewState extends State<TransactionsView> {
       _dateLeaving = null;
       _bill = null;
       _billBytes = null;
-      _proof = null;
-      _proofBytes = null;
+      _proofs.clear();
+      _sourceRequestIds.clear();
       _searchTerm = '';
       _submitting = false;
     });
   }
 
-  void _selectSection(InventorySection section) {
-    if (section == _section) return;
+  void _selectFactory(String? id) {
+    if (id == _factoryId) return;
     _resetForm();
+    final factory = widget.controller.factories
+        .where((factory) => factory.id == id)
+        .firstOrNull;
     setState(() {
-      _section = section;
-      _factoryName = null;
+      _factoryName = factory?.name;
+      _factoryId = factory?.id;
     });
-  }
-
-  void _selectFactory(String? name) {
-    if (name == _factoryName) return;
-    _resetForm();
-    setState(() => _factoryName = name);
   }
 
   List<CartItem> get _searchResults {
@@ -191,7 +259,7 @@ class _TransactionsViewState extends State<TransactionsView> {
           .map((m) => CartItem(
                 id: m.id,
                 name: m.name,
-                quantityChange: 1,
+                quantityChange: 0,
                 max: isIncoming ? null : m.available,
               ))
           .toList();
@@ -204,8 +272,9 @@ class _TransactionsViewState extends State<TransactionsView> {
         .take(5)
         .map((item) => CartItem(
               id: item.id,
+              materialNumber: item.materialNumber,
               name: item.name,
-              quantityChange: 1,
+              quantityChange: 0,
               max: isIncoming ? null : item.available,
             ))
         .toList();
@@ -213,7 +282,11 @@ class _TransactionsViewState extends State<TransactionsView> {
 
   void _addItem(CartItem candidate) {
     if (_selectedItems.any((i) => i.id == candidate.id)) return;
-    _qtyControllers[candidate.id] = TextEditingController(text: '1');
+    if (_selectedItems.length >= 100) {
+      _showMessage('A transaction can contain at most 100 items.');
+      return;
+    }
+    _qtyControllers[candidate.id] = TextEditingController();
     setState(() {
       _selectedItems.add(candidate);
       _searchController.clear();
@@ -226,16 +299,90 @@ class _TransactionsViewState extends State<TransactionsView> {
       final index = _selectedItems.indexWhere((i) => i.id == id);
       if (index == -1) return;
       final item = _selectedItems[index];
-      final parsed = int.tryParse(value);
-      var qty = parsed ?? 1;
-      if (_activeForm == _TransactionForm.dispatch && item.max != null) {
-        qty = qty.clamp(1, item.max!).toInt();
-      } else {
-        qty = qty < 1 ? 1 : qty;
-      }
+      final parsed = int.tryParse(value.trim());
+      final qty = parsed ?? 0;
       _selectedItems[index] = item.copyWith(quantityChange: qty);
-      _qtyControllers[id]?.text = '$qty';
     });
+  }
+
+  String? _quantityError(CartItem item) {
+    final raw = _qtyControllers[item.id]?.text.trim() ?? '';
+    if (raw.isEmpty) return 'Quantity is required';
+    final quantity = int.tryParse(raw);
+    if (quantity == null || quantity < 1) {
+      return 'Enter a positive whole number';
+    }
+    if (quantity > 2147483647) return 'Quantity is too large';
+    if (_activeForm == _TransactionForm.dispatch &&
+        item.max != null &&
+        quantity > item.max!) {
+      return 'Maximum available: ${item.max}';
+    }
+    return null;
+  }
+
+  bool get _canSubmit {
+    if (_submitting || _selectedItems.isEmpty || _billBytes == null) {
+      return false;
+    }
+    if (_selectedItems.any((item) => _quantityError(item) != null)) {
+      return false;
+    }
+    if (_section == InventorySection.sleeper && !_isFactoryScope) return false;
+    final incoming = _activeForm == _TransactionForm.incoming;
+    if (_truckController.text.trim().isEmpty) return false;
+    if (incoming) {
+      return _personController.text.trim().isNotEmpty &&
+          _comingFromController.text.trim().isNotEmpty &&
+          _dateOfArrival != null;
+    }
+    return _requestedByController.text.trim().isNotEmpty &&
+        _dateRequested != null &&
+        _dateLeaving != null &&
+        !_dateLeaving!.isBefore(_dateRequested!);
+  }
+
+  List<String> get _validationProblems {
+    final problems = <String>[];
+    if (_billBytes == null) problems.add('Upload a Bill');
+    if (_section == InventorySection.sleeper && !_isFactoryScope) {
+      problems.add('Select a factory');
+    }
+    if (_selectedItems.isEmpty) {
+      problems.add('Select at least one material');
+    } else {
+      for (final item in _selectedItems) {
+        if (_quantityError(item) != null) {
+          problems.add('Enter a valid quantity for ${item.name}');
+        }
+      }
+    }
+    final incoming = _activeForm == _TransactionForm.incoming;
+    if (incoming) {
+      if (_dateOfArrival == null) problems.add('Select the transaction date');
+      if (_personController.text.trim().isEmpty) {
+        problems.add('Enter the sender/vendor name');
+      }
+      if (_comingFromController.text.trim().isEmpty) {
+        problems.add('Enter where the shipment came from');
+      }
+    } else {
+      if (_dateRequested == null || _dateLeaving == null) {
+        problems.add('Select the transaction dates');
+      }
+      if (_dateRequested != null &&
+          _dateLeaving != null &&
+          _dateLeaving!.isBefore(_dateRequested!)) {
+        problems.add('Set leaving date on or after request date');
+      }
+      if (_requestedByController.text.trim().isEmpty) {
+        problems.add('Enter who requested the materials');
+      }
+    }
+    if (_truckController.text.trim().isEmpty) {
+      problems.add('Enter the truck number');
+    }
+    return problems;
   }
 
   void _removeItem(String id) {
@@ -243,28 +390,92 @@ class _TransactionsViewState extends State<TransactionsView> {
     setState(() => _selectedItems.removeWhere((i) => i.id == id));
   }
 
-  Future<void> _pickAttachment({required bool isBill}) async {
-    final picker = ImagePicker();
-    XFile? file;
+  Future<void> _pickAttachment({
+    required bool isBill,
+    int? replaceProofIndex,
+  }) async {
+    if (isBill ? _pickingBill : _pickingProof) return;
+    setState(() {
+      if (isBill) {
+        _pickingBill = true;
+      } else {
+        _pickingProof = true;
+      }
+    });
+    List<PickedTransactionFile>? files;
     try {
-      file = await picker.pickImage(source: ImageSource.camera);
-    } catch (_) {
-      // Camera unavailable on this platform; fall through to gallery.
+      files = await widget.filePicker
+          .pick(allowMultiple: !isBill && replaceProofIndex == null);
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint(
+            'Transaction file picker failed (${isBill ? 'Bill' : 'Proof'}, multiple: ${!isBill && replaceProofIndex == null}, picker: ${widget.filePicker.runtimeType}): $error\n$stackTrace');
+      }
+      _showMessage(kDebugMode
+          ? 'Unable to open the file picker: ${error.runtimeType}: $error'
+          : 'Unable to open the file picker. Please try again.');
+      if (mounted) {
+        setState(() {
+          _pickingBill = false;
+          _pickingProof = false;
+        });
+      }
+      return;
     }
-    file ??= await picker.pickImage(source: ImageSource.gallery);
-    if (file != null && mounted) {
-      final bytes = await file.readAsBytes();
-      if (!mounted) return;
-      setState(() {
-        if (isBill) {
-          _bill = file;
-          _billBytes = bytes;
-        } else {
-          _proof = file;
-          _proofBytes = bytes;
+    if (!mounted) return;
+    setState(() {
+      _pickingBill = false;
+      _pickingProof = false;
+    });
+    if (files == null) return;
+    if (files.isEmpty) {
+      _showMessage('No file was selected.');
+      return;
+    }
+    final attachments = <TransactionAttachment>[];
+    for (final file in files) {
+      final extension = file.name.split('.').last.toLowerCase();
+      if (!const {'pdf', 'jpg', 'jpeg', 'png', 'webp'}.contains(extension)) {
+        _showMessage('This file type is not supported.');
+        return;
+      }
+      final bytes = file.bytes;
+      if (bytes == null) {
+        _showMessage('Unable to read the selected file.');
+        return;
+      }
+      if (bytes.isEmpty) {
+        _showMessage('The selected file is empty.');
+        return;
+      }
+      if (bytes.lengthInBytes > 10 * 1024 * 1024) {
+        _showMessage('Files must be 10 MB or smaller.');
+        return;
+      }
+      attachments.add(TransactionAttachment(
+        fileName: file.name,
+        bytes: bytes,
+        contentType: extension == 'pdf'
+            ? 'application/pdf'
+            : 'image/${extension == 'jpg' ? 'jpeg' : extension}',
+      ));
+    }
+    setState(() {
+      if (isBill) {
+        _bill = attachments.first.fileName;
+        _billBytes = attachments.first.bytes;
+      } else if (replaceProofIndex != null) {
+        _proofs[replaceProofIndex] = attachments.first;
+      } else {
+        for (final attachment in attachments) {
+          final duplicate = _proofs.any((proof) =>
+              proof.fileName.toLowerCase() ==
+                  attachment.fileName.toLowerCase() &&
+              proof.bytes?.lengthInBytes == attachment.bytes?.lengthInBytes);
+          if (!duplicate) _proofs.add(attachment);
         }
-      });
-    }
+      }
+    });
   }
 
   void _removeAttachment({required bool isBill}) {
@@ -272,9 +483,6 @@ class _TransactionsViewState extends State<TransactionsView> {
       if (isBill) {
         _bill = null;
         _billBytes = null;
-      } else {
-        _proof = null;
-        _proofBytes = null;
       }
     });
   }
@@ -307,21 +515,30 @@ class _TransactionsViewState extends State<TransactionsView> {
   }
 
   Future<void> _submit() async {
+    if (_section == InventorySection.sleeper && !_isFactoryScope) {
+      _showMessage('Select a factory before creating a Sleeper transaction.');
+      return;
+    }
     if (_selectedItems.isEmpty) {
       _showMessage('Add at least one item.');
       return;
     }
-    final hasInvalidQty = _selectedItems.any((i) => i.quantityChange < 1);
+    final parsedItems = <CartItem>[];
+    final hasInvalidQty = _selectedItems.any((item) {
+      final error = _quantityError(item);
+      final parsed = int.tryParse(_qtyControllers[item.id]?.text.trim() ?? '');
+      if (error == null && parsed != null) {
+        parsedItems.add(item.copyWith(quantityChange: parsed));
+      }
+      return error != null;
+    });
     if (hasInvalidQty) {
       _showMessage('All items must have a quantity of 1 or more.');
       return;
     }
-    if (_bill == null) {
-      _showMessage('Bill is mandatory. Upload it at the top.');
-      return;
-    }
-    if (_proof == null) {
-      _showMessage('Proof is mandatory. Upload it at the top.');
+    if (_bill == null || _billBytes == null) {
+      _showMessage(
+          'Please upload the Bill before submitting this transaction.');
       return;
     }
 
@@ -354,57 +571,86 @@ class _TransactionsViewState extends State<TransactionsView> {
         return;
       }
       for (final sel in _selectedItems) {
-        final stock =
-            _scopeInventory.where((i) => i.id == sel.id).firstOrNull?.available;
-        if (stock != null && stock < sel.quantityChange) {
+        if (sel.max != null && sel.max! < sel.quantityChange) {
           _showMessage('Insufficient available stock for dispatch.');
           return;
         }
       }
     }
 
-    final billData = _encodeAttachment(_billBytes);
-    final proofData = _encodeAttachment(_proofBytes);
-
     setState(() => _submitting = true);
-    await widget.addTransaction(
-      type: isIncoming ? LogType.incoming.label : LogType.dispatch.label,
-      items: _selectedItems,
-      bill: _bill!.name,
-      billData: billData,
-      proof: _proof!.name,
-      proofData: proofData,
-      user: widget.session.username,
-      section: _section,
-      factoryName: _isFactoryScope ? _factoryName : null,
-      person: isIncoming ? person : requestedBy,
-      comingFrom: isIncoming ? comingFrom : null,
-      dateOfArrival: isIncoming ? _formatDate(_dateOfArrival!) : null,
-      dateRequested: isIncoming ? null : _formatDate(_dateRequested!),
-      dateLeaving: isIncoming ? null : _formatDate(_dateLeaving!),
-      truckNumber: truck,
-    );
+    final previousIds = widget.controller.logs.map((log) => log.id).toSet();
+    try {
+      await widget.addTransaction(
+        type: isIncoming ? LogType.incoming.label : LogType.dispatch.label,
+        items: parsedItems,
+        bill: _bill!,
+        billBytes: _billBytes,
+        proof: null,
+        proofBytes: null,
+        proofs: List.unmodifiable(_proofs),
+        user: widget.session.username,
+        section: _section,
+        factoryId: _factoryId,
+        sourceRequestIds: _sourceRequestIds.toList(),
+        person: isIncoming ? person : requestedBy,
+        comingFrom: isIncoming ? comingFrom : null,
+        dateOfArrival: isIncoming ? _isoDate(_dateOfArrival!) : null,
+        dateRequested: isIncoming ? null : _isoDate(_dateRequested!),
+        dateLeaving: isIncoming ? null : _isoDate(_dateLeaving!),
+        truckNumber: truck,
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() => _submitting = false);
+        _showMessage(error.toString());
+      }
+      return;
+    }
     if (!mounted) return;
+    final created = widget.controller.logs
+        .where((log) => !previousIds.contains(log.id))
+        .firstOrNull;
     _resetForm();
+    setState(() => _createdTransaction = created);
     _showMessage('Transaction completed successfully.');
   }
 
-  String? _encodeAttachment(Uint8List? bytes) {
-    if (bytes == null || bytes.lengthInBytes > 1024 * 1024) return null;
-    return base64Encode(bytes);
-  }
-
-  List<TransactionLog> _filteredLogs() {
-    return widget.controller.logs.where((log) {
-      // Legacy logs predating sections are shown in both Depot and Sleeper.
-      final sectionOk = log.section == null || log.section == _section;
-      final factoryOk = !_isFactoryScope || log.factoryName == _factoryName;
-      return sectionOk && factoryOk;
-    }).toList();
-  }
+  String _isoDate(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
+    final created = _createdTransaction;
+    if (created != null) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: MaxWidth(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'TRANSACTION CREATED',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: kInk,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ActionRecordCard(
+                log: created,
+                downloadFile: widget.controller.downloadFile,
+              ),
+              BrutalButton(
+                label: 'BACK TO ACTIONS',
+                onPressed: () => setState(() => _createdTransaction = null),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Column(
       children: [
         _buildHeader(),
@@ -427,9 +673,11 @@ class _TransactionsViewState extends State<TransactionsView> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                'ACTIONS',
-                style: TextStyle(
+              Text(
+                _section == InventorySection.depot
+                    ? 'DEPOT ACTIONS'
+                    : 'SLEEPER ACTIONS',
+                style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
                   letterSpacing: -0.5,
@@ -437,13 +685,14 @@ class _TransactionsViewState extends State<TransactionsView> {
                 ),
               ),
               const SizedBox(height: 14),
-              SectionTabs(active: _section, onChanged: _selectSection),
               if (_section == InventorySection.sleeper) ...[
-                const SizedBox(height: 10),
+                const MonoLabel('SELECT FACTORY', weight: FontWeight.w600),
+                const SizedBox(height: 8),
                 FactoryFilterChips(
                   factories: widget.controller.factories,
-                  selected: _factoryName,
+                  selectedFactoryId: _factoryId,
                   onChanged: _selectFactory,
+                  includeAll: false,
                 ),
               ],
             ],
@@ -454,8 +703,14 @@ class _TransactionsViewState extends State<TransactionsView> {
   }
 
   Widget _buildLanding() {
-    if (_canOperate) return _buildChooser();
-    return _buildViewerActions();
+    if (_canOperate) {
+      return Column(
+        children: [
+          Expanded(child: _buildChooser()),
+        ],
+      );
+    }
+    return const SizedBox.shrink();
   }
 
   Widget _buildChooser() {
@@ -469,8 +724,10 @@ class _TransactionsViewState extends State<TransactionsView> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  MonoLabel('SCOPE: $_scopeLabel', color: kGray400),
-                  const SizedBox(height: 16),
+                  if (_section == InventorySection.sleeper) ...[
+                    MonoLabel(_scopeLabel, color: kGray400),
+                    const SizedBox(height: 16),
+                  ],
                   _ChoiceButton(
                     icon: Icons.add,
                     label: 'New Incoming',
@@ -493,34 +750,23 @@ class _TransactionsViewState extends State<TransactionsView> {
     );
   }
 
-  Widget _buildViewerActions() {
-    final records = _filteredLogs();
-    if (records.isEmpty) {
-      return const Center(child: MonoLabel('No Actions', color: kGray400));
-    }
-    return MaxWidth(
-      child: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: records.length,
-        itemBuilder: (context, index) {
-          return _ActionRecordCard(log: records[index]);
-        },
-      ),
-    );
-  }
-
   Widget _buildAttachmentCard({
     required String label,
-    required XFile? file,
+    required String? file,
     required Uint8List? bytes,
     required VoidCallback onPick,
     required VoidCallback onRemove,
+    required bool requiredAttachment,
+    Key? uploadKey,
   }) {
     return BrutalCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          MonoLabel('UPLOAD ${label.toUpperCase()} *', weight: FontWeight.w600),
+          MonoLabel(
+            '${label.toUpperCase()}${requiredAttachment ? ' *' : ' (OPTIONAL)'}',
+            weight: FontWeight.w600,
+          ),
           const SizedBox(height: 12),
           if (file != null && bytes != null)
             Container(
@@ -531,23 +777,38 @@ class _TransactionsViewState extends State<TransactionsView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  ClipRect(
-                    child: Image.memory(
-                      bytes,
+                  if (file.toLowerCase().endsWith('.pdf'))
+                    const SizedBox(
                       height: 140,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.picture_as_pdf_outlined, size: 40),
+                            SizedBox(height: 8),
+                            MonoLabel('PDF DOCUMENT'),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    ClipRect(
+                      child: Image.memory(
+                        bytes,
                         height: 140,
-                        color: kGray50,
-                        child: const Center(
-                          child: MonoLabel(
-                            'Preview unavailable',
-                            color: kGray400,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => Container(
+                          height: 140,
+                          color: kGray50,
+                          child: const Center(
+                            child: MonoLabel(
+                              'Unable to display this image.',
+                              color: kRed,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
                   Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -562,13 +823,31 @@ class _TransactionsViewState extends State<TransactionsView> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            file.name,
+                            file,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: monoStyle(size: 9, color: kSurface),
                           ),
                         ),
+                        MonoLabel(
+                          '${file.toLowerCase().endsWith('.pdf') ? 'PDF' : 'IMAGE'} | ${bytes.lengthInBytes} BYTES',
+                          size: 8,
+                          color: kSurface,
+                        ),
                         const SizedBox(width: 8),
+                        _AttachmentAction(
+                          icon: Icons.visibility_outlined,
+                          tooltip: 'Preview $label',
+                          onTap: () => showAttachmentPreview(
+                            context,
+                            fileName: file,
+                            bytes: bytes,
+                            contentType: file.toLowerCase().endsWith('.pdf')
+                                ? 'application/pdf'
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
                         _AttachmentAction(
                           icon: Icons.refresh,
                           tooltip: 'Replace $label',
@@ -588,6 +867,7 @@ class _TransactionsViewState extends State<TransactionsView> {
             )
           else
             InkWell(
+              key: uploadKey,
               onTap: onPick,
               child: Container(
                 width: double.infinity,
@@ -605,9 +885,12 @@ class _TransactionsViewState extends State<TransactionsView> {
                       ),
                       const SizedBox(height: 8),
                       MonoLabel(
-                        'Tap to upload $label image',
+                        requiredAttachment ? 'Upload Bill' : 'Add Proof',
                         color: kGray400,
                       ),
+                      const SizedBox(height: 4),
+                      const MonoLabel('PDF, JPG, PNG or WebP',
+                          size: 8, color: kGray400),
                     ],
                   ),
                 ),
@@ -632,6 +915,7 @@ class _TransactionsViewState extends State<TransactionsView> {
             controller: isIncoming ? _personController : _requestedByController,
             label: isIncoming ? 'Person Who Sent Order' : 'Requested By',
             hint: isIncoming ? 'Sender / vendor name' : 'Who the items are for',
+            onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 12),
           if (isIncoming) ...[
@@ -639,6 +923,7 @@ class _TransactionsViewState extends State<TransactionsView> {
               controller: _comingFromController,
               label: 'Coming From',
               hint: 'Origin / location',
+              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 12),
             _FormDateButton(
@@ -668,6 +953,7 @@ class _TransactionsViewState extends State<TransactionsView> {
             label: 'Truck Number',
             hint: 'Vehicle registration',
             uppercase: true,
+            onChanged: (_) => setState(() {}),
           ),
         ],
       ),
@@ -735,14 +1021,34 @@ class _TransactionsViewState extends State<TransactionsView> {
                     bytes: _billBytes,
                     onPick: () => _pickAttachment(isBill: true),
                     onRemove: () => _removeAttachment(isBill: true),
+                    requiredAttachment: true,
+                    uploadKey: const ValueKey('upload-bill'),
                   ),
+                  if (_proofs.isNotEmpty)
+                    MonoLabel('PROOFS (${_proofs.length})',
+                        weight: FontWeight.w700),
+                  for (final indexed in _proofs.indexed) ...[
+                    const SizedBox(height: 8),
+                    _buildAttachmentCard(
+                      label: 'Proof',
+                      file: indexed.$2.fileName,
+                      bytes: indexed.$2.bytes,
+                      onPick: () => _pickAttachment(
+                          isBill: false, replaceProofIndex: indexed.$1),
+                      onRemove: () =>
+                          setState(() => _proofs.removeAt(indexed.$1)),
+                      requiredAttachment: false,
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   _buildAttachmentCard(
-                    label: 'Proof',
-                    file: _proof,
-                    bytes: _proofBytes,
+                    label: _proofs.isEmpty ? 'Proof' : 'Add Another Proof',
+                    file: null,
+                    bytes: null,
                     onPick: () => _pickAttachment(isBill: false),
-                    onRemove: () => _removeAttachment(isBill: false),
+                    onRemove: () {},
+                    requiredAttachment: false,
+                    uploadKey: const ValueKey('add-proof'),
                   ),
                   const SizedBox(height: 16),
                   _buildDetailsCard(isIncoming),
@@ -785,7 +1091,8 @@ class _TransactionsViewState extends State<TransactionsView> {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          MonoLabel(item.id, size: 9),
+                                          MonoLabel(item.materialNumber,
+                                              size: 9),
                                           Text(
                                             item.name.toUpperCase(),
                                             style: const TextStyle(
@@ -812,65 +1119,84 @@ class _TransactionsViewState extends State<TransactionsView> {
                           const DashedBorder(
                             padding: EdgeInsets.all(16),
                             child: Center(
-                              child:
-                                  MonoLabel('Cart is empty', color: kGray400),
+                              child: MonoLabel(
+                                'Search and add one or more materials to this transaction.',
+                                color: kGray400,
+                              ),
                             ),
                           )
                         else
                           for (final item in _selectedItems)
                             Container(
+                              key: ValueKey('transaction-item-${item.id}'),
                               margin: const EdgeInsets.only(bottom: 8),
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
                                 color: kGray50,
                                 border: Border.all(color: kGray200),
                               ),
-                              child: Row(
+                              child: Column(
                                 children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.name.toUpperCase(),
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: kInk,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              item.name.toUpperCase(),
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                color: kInk,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            MonoLabel(item.materialNumber,
+                                                size: 9),
+                                          ],
                                         ),
-                                        MonoLabel(item.id, size: 9),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  SizedBox(
-                                    width: 72,
-                                    child: BrutalTextInput(
-                                      controller: _qtyControllerFor(item),
-                                      keyboardType: TextInputType.number,
-                                      textAlign: TextAlign.center,
-                                      minHeight: 36,
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                              vertical: 8, horizontal: 8),
-                                      onChanged: (v) => _updateQty(item.id, v),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  InkWell(
-                                    onTap: () => _removeItem(item.id),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        border: Border.all(color: kBorderDark),
                                       ),
-                                      child: const Icon(Icons.close,
-                                          size: 14, color: kInk),
-                                    ),
+                                      const SizedBox(width: 8),
+                                      SizedBox(
+                                        width: 72,
+                                        child: BrutalTextInput(
+                                          controller: _qtyControllerFor(item),
+                                          keyboardType: TextInputType.number,
+                                          textAlign: TextAlign.center,
+                                          minHeight: 36,
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                                  vertical: 8, horizontal: 8),
+                                          onChanged: (v) =>
+                                              _updateQty(item.id, v),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      InkWell(
+                                        onTap: () => _removeItem(item.id),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            border:
+                                                Border.all(color: kBorderDark),
+                                          ),
+                                          child: const Icon(Icons.close,
+                                              size: 14, color: kInk),
+                                        ),
+                                      ),
+                                    ],
                                   ),
+                                  if (_quantityError(item)
+                                      case final error?) ...[
+                                    const SizedBox(height: 6),
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: MonoLabel(error,
+                                          size: 8, color: kRed),
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),
@@ -878,11 +1204,73 @@ class _TransactionsViewState extends State<TransactionsView> {
                     ),
                   ),
                   const SizedBox(height: 20),
+                  if (_linkableRequests.isNotEmpty) ...[
+                    BrutalCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const MonoLabel(
+                            'FULFILLED VIEWER REQUESTS',
+                            weight: FontWeight.w700,
+                          ),
+                          const SizedBox(height: 6),
+                          const MonoLabel(
+                            'Select accepted requests fulfilled by this dispatch.',
+                            size: 9,
+                            color: kGray400,
+                          ),
+                          const SizedBox(height: 8),
+                          for (final request in _linkableRequests)
+                            CheckboxListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              value: _sourceRequestIds.contains(request.id),
+                              title: Text(
+                                '${request.itemName} - ${request.quantity}',
+                                style: monoStyle(size: 10, color: kInk),
+                              ),
+                              subtitle: MonoLabel(
+                                '${request.viewerName} | ${request.materialNumber}',
+                                size: 8,
+                              ),
+                              onChanged: _submitting
+                                  ? null
+                                  : (selected) => setState(() {
+                                        if (selected == true) {
+                                          _sourceRequestIds.add(request.id);
+                                        } else {
+                                          _sourceRequestIds.remove(request.id);
+                                        }
+                                      }),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                  if (_validationProblems.isNotEmpty) ...[
+                    BrutalCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const MonoLabel(
+                              'Complete the following before submitting:',
+                              weight: FontWeight.w700,
+                              color: kRed),
+                          const SizedBox(height: 8),
+                          for (final problem in _validationProblems)
+                            Text('- $problem',
+                                style: monoStyle(size: 9, color: kRed)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   BrutalButton(
                     label: _submitting ? 'Submitting...' : 'Submit Transaction',
                     filled: true,
                     padding: const EdgeInsets.all(16),
-                    onPressed: _submitting ? null : _submit,
+                    onPressed: _canSubmit ? _submit : null,
                   ),
                   const SizedBox(height: 24),
                 ],
@@ -958,10 +1346,11 @@ class _FormDateButton extends StatelessWidget {
   }
 }
 
-class _ActionRecordCard extends StatelessWidget {
+class ActionRecordCard extends StatelessWidget {
   final TransactionLog log;
+  final Future<Uint8List> Function(String fileId)? downloadFile;
 
-  const _ActionRecordCard({required this.log});
+  const ActionRecordCard({super.key, required this.log, this.downloadFile});
 
   Color get _typeColor {
     switch (log.type) {
@@ -1101,30 +1490,48 @@ class _ActionRecordCard extends StatelessWidget {
                 ],
               ),
             ),
+          const SizedBox(height: 12),
+          const MonoLabel('BILL', weight: FontWeight.w700),
           if (log.bill != null ||
-              log.billData != null ||
-              log.proof != null ||
-              log.proofData != null) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (log.bill != null || log.billData != null)
-                  _RecordAttachment(
-                    label: 'Bill',
-                    fileName: log.bill,
-                    data: log.billData,
-                  ),
-                if (log.proof != null || log.proofData != null)
-                  _RecordAttachment(
-                    label: 'Proof',
-                    fileName: log.proof,
-                    data: log.proofData,
-                  ),
-              ],
+              log.billFileId != null ||
+              log.billData != null)
+            _RecordAttachment(
+              label: 'View Bill',
+              fileName: log.bill,
+              data: log.billData,
+              fileId: log.billFileId,
+              downloadFile: downloadFile,
+            )
+          else
+            const MonoLabel('Bill: Not available', color: kGray400),
+          const SizedBox(height: 12),
+          MonoLabel(
+              'PROOFS (${log.proofs.isNotEmpty ? log.proofs.length : (log.proof != null || log.proofFileId != null || log.proofData != null ? 1 : 0)})',
+              weight: FontWeight.w700),
+          if (log.proofs.isEmpty &&
+              log.proof == null &&
+              log.proofFileId == null &&
+              log.proofData == null)
+            const MonoLabel('No proof attached', color: kGray400)
+          else if (log.proofs.isNotEmpty)
+            for (final indexed in log.proofs.indexed)
+              _RecordAttachment(
+                label: 'View Proof ${indexed.$1 + 1}',
+                fileName: indexed.$2.fileName,
+                data: null,
+                fileId: indexed.$2.fileId,
+                attachmentBytes: indexed.$2.bytes,
+                contentType: indexed.$2.contentType,
+                downloadFile: downloadFile,
+              )
+          else
+            _RecordAttachment(
+              label: 'View Proof',
+              fileName: log.proof,
+              data: log.proofData,
+              fileId: log.proofFileId,
+              downloadFile: downloadFile,
             ),
-          ],
         ],
       ),
     );
@@ -1149,17 +1556,27 @@ class _RecordAttachment extends StatelessWidget {
   final String label;
   final String? fileName;
   final String? data;
+  final String? fileId;
+  final Uint8List? attachmentBytes;
+  final String? contentType;
+  final Future<Uint8List> Function(String fileId)? downloadFile;
 
   const _RecordAttachment({
     required this.label,
     required this.fileName,
     required this.data,
+    required this.fileId,
+    this.attachmentBytes,
+    this.contentType,
+    this.downloadFile,
   });
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: data == null ? null : () => _showPreview(context),
+      onTap: data == null && fileId == null && attachmentBytes == null
+          ? null
+          : () => _showPreview(context),
       child: Container(
         constraints: const BoxConstraints(maxWidth: 260),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -1171,7 +1588,9 @@ class _RecordAttachment extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              data == null ? Icons.image_outlined : Icons.visibility_outlined,
+              data == null && fileId == null
+                  ? Icons.image_outlined
+                  : Icons.visibility_outlined,
               size: 12,
               color: kInkMuted,
             ),
@@ -1190,53 +1609,37 @@ class _RecordAttachment extends StatelessWidget {
     );
   }
 
-  void _showPreview(BuildContext context) {
-    final encoded = data;
-    if (encoded == null || encoded.isEmpty) return;
-    final Uint8List bytes;
+  Future<void> _showPreview(BuildContext context) async {
+    Uint8List bytes;
     try {
-      bytes = base64Decode(encoded);
+      final encoded = data;
+      if (attachmentBytes != null) {
+        bytes = attachmentBytes!;
+      } else if (encoded != null && encoded.isNotEmpty) {
+        bytes = base64Decode(encoded);
+      } else if (fileId != null) {
+        final loader = downloadFile;
+        if (loader == null) return;
+        bytes = await loader(fileId!);
+      } else {
+        return;
+      }
+    } on ApiException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
+      return;
     } catch (_) {
       return;
     }
-    showDialog<void>(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: kSurface,
-        shape: const RoundedRectangleBorder(),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                '$label: ${fileName ?? 'Attached image'}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: monoStyle(size: 11, weight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 420),
-                child: Image.memory(
-                  bytes,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Center(child: MonoLabel('Unable to display image')),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              BrutalButton(
-                label: 'CLOSE',
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ],
-          ),
-        ),
-      ),
+    if (!context.mounted) return;
+    await showAttachmentPreview(
+      context,
+      fileName: fileName ?? 'Attachment',
+      bytes: bytes,
+      contentType: contentType,
     );
   }
 }

@@ -8,6 +8,12 @@ enum PurchaseOrderStatus {
 
   final String label;
 
+  String get apiValue => switch (this) {
+        PurchaseOrderStatus.none => 'NONE',
+        PurchaseOrderStatus.pending => 'PENDING',
+        PurchaseOrderStatus.ordered => 'ORDERED',
+      };
+
   bool get hasIncoming => this != none;
 
   static PurchaseOrderStatus fromLabel(String? label) {
@@ -15,7 +21,10 @@ enum PurchaseOrderStatus {
     final trimmed = label.trim();
     for (final status in values) {
       if (status.label.toLowerCase() == trimmed.toLowerCase()) return status;
-      if (status.name.toLowerCase() == trimmed.toLowerCase()) return status;
+      if (status.name.toLowerCase() == trimmed.toLowerCase() ||
+          status.apiValue.toLowerCase() == trimmed.toLowerCase()) {
+        return status;
+      }
     }
     return none;
   }

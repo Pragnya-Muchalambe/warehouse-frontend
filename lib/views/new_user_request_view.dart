@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../services/account_request_service.dart';
-import '../services/auth_service.dart';
 import '../theme.dart';
 import '../widgets/brutal.dart';
 
@@ -9,7 +8,9 @@ import '../widgets/brutal.dart';
 /// that Superadmin reviews from the PERMISSION section. The login username is
 /// the lowercased requested ID once the request is accepted.
 class NewUserRequestView extends StatefulWidget {
-  const NewUserRequestView({super.key});
+  final AccountRequestService? service;
+
+  const NewUserRequestView({super.key, this.service});
 
   @override
   State<NewUserRequestView> createState() => _NewUserRequestViewState();
@@ -17,24 +18,33 @@ class NewUserRequestView extends StatefulWidget {
 
 class _NewUserRequestViewState extends State<NewUserRequestView> {
   final _formKey = GlobalKey<FormState>();
-  final AccountRequestService _service = AccountRequestService();
-  final AuthService _authService = AuthService();
+  late final AccountRequestService _service;
   final _nameController = TextEditingController();
   final _idController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
 
   String? _role;
   String? _roleError;
   String? _idError;
   bool _submitting = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
 
   static final _idPattern = RegExp(r'^[A-Za-z0-9-]+$');
+
+  @override
+  void initState() {
+    super.initState();
+    _service = widget.service ?? AccountRequestService();
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
     _idController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -46,22 +56,21 @@ class _NewUserRequestViewState extends State<NewUserRequestView> {
     }
     setState(() => _submitting = true);
 
-    final taken = await _authService.isAccountIdTaken(_idController.text);
-    if (!mounted) return;
-    if (taken) {
-      setState(() {
-        _submitting = false;
-        _idError = 'This ID already belongs to an active account.';
-      });
+    try {
+      await _service.addRequest(
+          name: _nameController.text.trim(),
+          id: _idController.text.trim().toUpperCase(),
+          password: _passwordController.text,
+          role: _role!);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _idError = error.toString();
+        });
+      }
       return;
     }
-
-    await _service.addRequest(
-      name: _nameController.text.trim(),
-      id: _idController.text.trim().toUpperCase(),
-      password: _passwordController.text,
-      role: _role!,
-    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Account request has been sent')),
@@ -158,10 +167,10 @@ class _NewUserRequestViewState extends State<NewUserRequestView> {
                                   label: 'Name',
                                   hint: 'Rahul Kumar',
                                   textInputAction: TextInputAction.next,
-                                  validator: (v) => (v == null ||
-                                          v.trim().isEmpty)
-                                      ? 'Name required'
-                                      : null,
+                                  validator: (v) =>
+                                      (v == null || v.trim().isEmpty)
+                                          ? 'Name required'
+                                          : null,
                                 ),
                                 const SizedBox(height: 16),
                                 BrutalTextField(
@@ -199,24 +208,55 @@ class _NewUserRequestViewState extends State<NewUserRequestView> {
                                 BrutalTextField(
                                   controller: _passwordController,
                                   label: 'Password',
-                                  hint: 'Minimum 4 characters',
-                                  obscureText: true,
+                                  hint: 'Minimum 12 characters',
+                                  obscureText: _obscurePassword,
+                                  suffixIcon: IconButton(
+                                    tooltip: _obscurePassword
+                                        ? 'Show password'
+                                        : 'Hide password',
+                                    icon: Icon(_obscurePassword
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined),
+                                    onPressed: () => setState(() =>
+                                        _obscurePassword = !_obscurePassword),
+                                  ),
                                   textInputAction: TextInputAction.next,
                                   validator: (v) {
                                     if (v == null || v.isEmpty) {
                                       return 'Password required';
                                     }
-                                    if (v.length < 4) {
-                                      return 'Password must be at least 4 characters';
+                                    if (v.length < 12) {
+                                      return 'Password must be at least 12 characters';
                                     }
                                     return null;
                                   },
                                 ),
                                 const SizedBox(height: 16),
+                                BrutalTextField(
+                                  controller: _confirmPasswordController,
+                                  label: 'Confirm Password',
+                                  obscureText: _obscureConfirmPassword,
+                                  suffixIcon: IconButton(
+                                    tooltip: _obscureConfirmPassword
+                                        ? 'Show password'
+                                        : 'Hide password',
+                                    icon: Icon(_obscureConfirmPassword
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined),
+                                    onPressed: () => setState(() =>
+                                        _obscureConfirmPassword =
+                                            !_obscureConfirmPassword),
+                                  ),
+                                  onChanged: (_) => setState(() {}),
+                                  validator: (v) =>
+                                      v != _passwordController.text
+                                          ? 'Passwords do not match'
+                                          : null,
+                                ),
+                                const SizedBox(height: 16),
                                 Text(
                                   'Role',
-                                  style: monoStyle(
-                                      weight: FontWeight.w600),
+                                  style: monoStyle(weight: FontWeight.w600),
                                 ),
                                 const SizedBox(height: 8),
                                 Container(
@@ -260,8 +300,7 @@ class _NewUserRequestViewState extends State<NewUserRequestView> {
                                           _roleError = null;
                                         }),
                                         dropdownColor: kSurface,
-                                        style: monoStyle(
-                                            size: 11, color: kInk),
+                                        style: monoStyle(size: 11, color: kInk),
                                         icon: const Icon(
                                           Icons.arrow_drop_down,
                                           color: kInk,

@@ -129,6 +129,7 @@ class BrutalTextInput extends StatefulWidget {
   final bool uppercase;
   final Widget? prefixIcon;
   final Widget? suffixIcon;
+  final ValueChanged<String>? onSubmitted;
   final TextAlign textAlign;
   final ValueChanged<String>? onChanged;
   final TextInputAction? textInputAction;
@@ -146,6 +147,7 @@ class BrutalTextInput extends StatefulWidget {
     this.uppercase = false,
     this.prefixIcon,
     this.suffixIcon,
+    this.onSubmitted,
     this.textAlign = TextAlign.start,
     this.onChanged,
     this.textInputAction,
@@ -238,6 +240,8 @@ class BrutalTextField extends StatefulWidget {
   final bool obscureText;
   final ValueChanged<String>? onChanged;
   final TextInputAction? textInputAction;
+  final Widget? suffixIcon;
+  final ValueChanged<String>? onSubmitted;
 
   const BrutalTextField({
     super.key,
@@ -249,6 +253,8 @@ class BrutalTextField extends StatefulWidget {
     this.obscureText = false,
     this.onChanged,
     this.textInputAction,
+    this.suffixIcon,
+    this.onSubmitted,
   });
 
   @override
@@ -300,6 +306,7 @@ class _BrutalTextFieldState extends State<BrutalTextField> {
             obscureText: widget.obscureText,
             keyboardType: widget.keyboardType,
             onChanged: widget.onChanged,
+            onFieldSubmitted: widget.onSubmitted,
             textInputAction: widget.textInputAction,
             style: monoStyle(size: 13, color: kInk),
             decoration: InputDecoration(
@@ -309,6 +316,7 @@ class _BrutalTextFieldState extends State<BrutalTextField> {
               hintStyle: monoStyle(color: kGray400),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              suffixIcon: widget.suffixIcon,
             ),
           ),
         ),

@@ -1,56 +1,54 @@
-import 'dart:convert';
-
-import 'package:shared_preferences/shared_preferences.dart';
-
 import '../models/account_request.dart';
+import 'api_client.dart';
 
-/// Persists NEW USER account-creation requests using the same
-/// SharedPreferences architecture as the rest of the POC. Fully additive:
-/// existing keys are never touched.
 class AccountRequestService {
-  static const accountRequestsKey = 'account_requests';
+  AccountRequestService({ApiClient? api}) : _api = api ?? ApiClient.instance;
+
+  final ApiClient _api;
 
   Future<List<AccountRequest>> loadRequests() async {
-    final prefs = await SharedPreferences.getInstance();
-    final stored = prefs.getString(accountRequestsKey);
-    if (stored == null) return [];
-    try {
-      final decoded = jsonDecode(stored) as List<dynamic>;
-      return decoded
-          .map((e) => AccountRequest.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (_) {
-      return [];
-    }
+    final data = await _api.getAll('/account-requests');
+    return data
+        .map((request) =>
+            AccountRequest.fromJson(request as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<void> saveRequests(List<AccountRequest> requests) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      accountRequestsKey,
-      jsonEncode(requests.map((r) => r.toJson()).toList()),
-    );
-  }
-
-  /// Creates a new Pending account request and prepends it to the persisted
-  /// list. Returns the created request.
   Future<AccountRequest> addRequest({
     required String name,
     required String id,
     required String password,
     required String role,
   }) async {
-    final request = AccountRequest(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
-      name: name,
-      requestedId: id.toUpperCase(),
-      password: password,
-      role: role,
-      submittedAt: DateTime.now(),
-      status: 'Pending',
+    final data = await _api.sendJson(
+      'POST',
+      '/account-requests',
+      body: {
+        'name': name,
+        'requestedId': id,
+        'password': password,
+        'role': role.toUpperCase(),
+      },
     );
-    final all = await loadRequests();
-    await saveRequests([request, ...all]);
-    return request;
+    return AccountRequest.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<AccountRequest> decide(
+    AccountRequest request,
+    String action, {
+    String? reason,
+  }) async {
+    final data = await _api.sendJson(
+      'POST',
+      '/account-requests/${Uri.encodeComponent(request.id)}/$action',
+      version: request.version,
+      body: {
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      },
+    ) as Map<String, dynamic>;
+    final resource = action == 'approve'
+        ? data['accountRequest'] as Map<String, dynamic>
+        : data;
+    return AccountRequest.fromJson(resource);
   }
 }

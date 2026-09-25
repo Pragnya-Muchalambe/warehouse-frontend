@@ -1,14 +1,27 @@
 import 'package:flutter/material.dart';
 
 import '../models/account_request.dart';
+import '../models/user_account.dart';
 import '../services/account_request_service.dart';
+import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/user_account_service.dart';
 import '../theme.dart';
 import '../widgets/brutal.dart';
 
 const List<String> _months = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 String _formatTimestamp(DateTime dt) {
@@ -22,59 +35,208 @@ String _formatTimestamp(DateTime dt) {
 /// real login account through the existing authentication architecture;
 /// rejecting keeps the account unusable but visible for the record.
 class SuperadminPermissionView extends StatefulWidget {
-  const SuperadminPermissionView({super.key});
+  final AuthSession session;
+  final UserAccountService? userService;
+  final ValueChanged<UserAccount>? onAccountDeleted;
+  final VoidCallback? onRequestsChanged;
+  final AccountRequestService? accountRequestService;
+
+  const SuperadminPermissionView({
+    super.key,
+    required this.session,
+    this.userService,
+    this.onAccountDeleted,
+    this.onRequestsChanged,
+    this.accountRequestService,
+  });
 
   @override
-  State<SuperadminPermissionView> createState() => _SuperadminPermissionViewState();
+  State<SuperadminPermissionView> createState() =>
+      _SuperadminPermissionViewState();
 }
 
 class _SuperadminPermissionViewState extends State<SuperadminPermissionView> {
-  final AccountRequestService _service = AccountRequestService();
-  final AuthService _authService = AuthService();
+  late final AccountRequestService _service;
+  late final UserAccountService _userService;
   List<AccountRequest> _requests = [];
+  List<UserAccount> _users = [];
   bool _loading = true;
   bool _busy = false;
+  String? _deletingUserId;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
+    _service = widget.accountRequestService ?? AccountRequestService();
+    _userService = widget.userService ?? UserAccountService();
     _reload();
   }
 
   Future<void> _reload() async {
-    final requests = await _service.loadRequests();
     if (mounted) {
       setState(() {
-        _requests = requests;
-        _loading = false;
+        _loading = true;
+        _error = null;
       });
     }
+    try {
+      final requests = await _service.loadRequests();
+      final users = await _userService.loadUsers();
+      if (mounted) {
+        setState(() {
+          _requests = List.of(requests);
+          _requests.sort((a, b) {
+            final pending =
+                (b.isPending ? 1 : 0).compareTo(a.isPending ? 1 : 0);
+            return pending != 0
+                ? pending
+                : b.submittedAt.compareTo(a.submittedAt);
+          });
+          _users = List.of(users);
+          _loading = false;
+          _error = null;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Unable to load Permission data.';
+        });
+      }
+    }
+  }
+
+  Future<void> _deleteUser(UserAccount user) async {
+    if (_busy || user.id == widget.session.id) return;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Delete Employee Account?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Employee: ${user.name}'),
+                Text('User ID: ${user.username}'),
+                Text('Role: ${user.role == 'admin' ? 'Admin' : 'Viewer'}'),
+                const SizedBox(height: 12),
+                const Text(
+                    'This account will no longer be able to sign in.\nExisting requests, transactions and Audit history will remain preserved.'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Delete Account'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+    setState(() {
+      _busy = true;
+      _deletingUserId = user.id;
+    });
+    try {
+      await _userService.deleteUser(user.id, user.version);
+      await _reload();
+      widget.onAccountDeleted?.call(user);
+      widget.onRequestsChanged?.call();
+      _showMessage('Account deleted. The user can no longer log in.');
+    } on ApiException catch (error) {
+      if (error.isVersionConflict) await _reload();
+      _showMessage(error.message);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _deletingUserId = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _showEmployeeSelector() async {
+    final employees = _users
+        .where((user) => user.id != widget.session.id)
+        .where((user) => user.role == 'viewer' || user.role == 'admin')
+        .where((user) => user.status.toUpperCase() == 'ACTIVE')
+        .toList();
+    final controller = TextEditingController();
+    String term = '';
+    final selected = await showDialog<UserAccount>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final normalized = term.trim().toLowerCase();
+          final filtered = employees
+              .where((user) =>
+                  normalized.isEmpty ||
+                  user.username.toLowerCase().contains(normalized) ||
+                  user.accountId.toLowerCase().contains(normalized) ||
+                  user.name.toLowerCase().contains(normalized) ||
+                  user.role.toLowerCase().contains(normalized))
+              .toList();
+          return AlertDialog(
+            title: const Text('Delete Employee Account'),
+            content: SizedBox(
+              width: 480,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    labelText: 'Search by User ID or name',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                  onChanged: (value) => setDialogState(() => term = value),
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: filtered
+                        .map((user) => ListTile(
+                              title: Text(
+                                  '${user.name} — ${user.username} — ${user.role == 'admin' ? 'Admin' : 'Viewer'}'),
+                              onTap: () => Navigator.pop(dialogContext, user),
+                            ))
+                        .toList(),
+                  ),
+                ),
+              ]),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              )
+            ],
+          );
+        },
+      ),
+    );
+    controller.dispose();
+    if (selected != null && mounted) await _deleteUser(selected);
   }
 
   Future<void> _accept(AccountRequest request) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      // Duplicate guard: never overwrite an active account.
-      final taken = await _authService.isAccountIdTaken(request.requestedId);
-      if (taken) {
-        _showMessage(
-            'An active account with this ID already exists. Request kept pending.');
-        return;
-      }
-      final created = await _authService.createAccount(
-        name: request.name,
-        id: request.requestedId,
-        password: request.password,
-        role: request.role,
-      );
-      if (!created) {
-        _showMessage(
-            'An active account with this ID already exists. Request kept pending.');
-        return;
-      }
-      await _applyDecision(request, status: 'Accepted');
+      await _service.decide(request, 'approve');
+      await _reload();
+      widget.onRequestsChanged?.call();
       _showMessage('Account created. The user can now log in.');
+    } on ApiException catch (error) {
+      if (error.isVersionConflict) await _reload();
+      _showMessage(error.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -84,26 +246,46 @@ class _SuperadminPermissionViewState extends State<SuperadminPermissionView> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await _applyDecision(request, status: 'Rejected');
+      final decision = await _optionalReason();
+      if (!decision.confirmed) return;
+      await _service.decide(request, 'reject', reason: decision.reason);
+      await _reload();
+      widget.onRequestsChanged?.call();
       _showMessage('Request rejected. The user cannot log in.');
+    } on ApiException catch (error) {
+      if (error.isVersionConflict) await _reload();
+      _showMessage(error.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _applyDecision(AccountRequest request,
-      {required String status}) async {
-    final all = await _service.loadRequests();
-    final updated = all.map((r) {
-      if (r.id != request.id) return r;
-      return r.copyWith(
-        status: status,
-        decisionBy: 'superadmin',
-        decisionAt: DateTime.now(),
-      );
-    }).toList();
-    await _service.saveRequests(updated);
-    await _reload();
+  Future<({bool confirmed, String? reason})> _optionalReason() async {
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Reject Request'),
+            content: TextField(
+              controller: controller,
+              decoration: const InputDecoration(labelText: 'Reason (Optional)'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Reject'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    final reason = controller.text.trim();
+    controller.dispose();
+    return (confirmed: confirmed, reason: reason.isEmpty ? null : reason);
   }
 
   void _showMessage(String message) {
@@ -148,27 +330,68 @@ class _SuperadminPermissionViewState extends State<SuperadminPermissionView> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              : _requests.isEmpty
-                  ? const Center(
-                      child: MonoLabel('No account requests', color: kGray400),
+              : _error != null
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          MonoLabel(_error!, color: kRed),
+                          const SizedBox(height: 12),
+                          BrutalButton(label: 'RETRY', onPressed: _reload),
+                        ],
+                      ),
                     )
                   : MaxWidth(
-                      child: ListView.builder(
+                      child: ListView(
                         padding: const EdgeInsets.all(16),
-                        itemCount: _requests.length,
-                        itemBuilder: (context, index) {
-                          final request = _requests[index];
-                          return _AccountRequestCard(
-                            request: request,
-                            busy: _busy,
-                            onAccept: request.isPending && !_busy
-                                ? () => _accept(request)
-                                : null,
-                            onReject: request.isPending && !_busy
-                                ? () => _reject(request)
-                                : null,
-                          );
-                        },
+                        children: [
+                          const MonoLabel(
+                            'EMPLOYEE ACCOUNTS',
+                            size: 11,
+                            weight: FontWeight.w700,
+                          ),
+                          const SizedBox(height: 10),
+                          MonoLabel(
+                            'Active employees: ${_users.where((user) => user.role == 'viewer' || user.role == 'admin').length}',
+                          ),
+                          const SizedBox(height: 10),
+                          BrutalButton(
+                            label: _deletingUserId == null
+                                ? 'DELETE EMPLOYEE ACCOUNT'
+                                : 'DELETING...',
+                            onPressed:
+                                widget.session.role == 'superadmin' && !_busy
+                                    ? _showEmployeeSelector
+                                    : null,
+                          ),
+                          const SizedBox(height: 12),
+                          const MonoLabel(
+                            'ACCOUNT REQUESTS',
+                            size: 11,
+                            weight: FontWeight.w700,
+                          ),
+                          const SizedBox(height: 10),
+                          if (_requests.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: MonoLabel(
+                                'No pending account requests.',
+                                color: kGray400,
+                              ),
+                            )
+                          else
+                            for (final request in _requests)
+                              _AccountRequestCard(
+                                request: request,
+                                busy: _busy,
+                                onAccept: request.isPending && !_busy
+                                    ? () => _accept(request)
+                                    : null,
+                                onReject: request.isPending && !_busy
+                                    ? () => _reject(request)
+                                    : null,
+                              ),
+                        ],
                       ),
                     ),
         ),
@@ -226,8 +449,7 @@ class _AccountRequestCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: _statusColor,
                   border: Border.all(color: _statusColor),

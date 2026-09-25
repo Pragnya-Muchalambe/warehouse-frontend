@@ -61,10 +61,12 @@ class _HomeShellState extends State<HomeShell> {
         );
       case _Tab.logs:
         return LogsView(
-          logs: controller.logs,
+          logs: controller.auditLogs,
+          transactions: controller.logs,
           factories: controller.factories,
           session: widget.session,
           editTransaction: controller.editTransaction,
+          downloadFile: controller.downloadFile,
         );
     }
   }

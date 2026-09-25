@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:warehouse_poc/controllers/inventory_controller.dart';
+import 'package:warehouse_poc/models/inventory_item.dart';
 import 'package:warehouse_poc/services/auth_service.dart';
 import 'package:warehouse_poc/theme.dart';
 import 'package:warehouse_poc/views/transactions_view.dart';
+
+import 'fake_inventory_service.dart';
 
 void main() {
   testWidgets('Sleeper action form header fits a long factory name',
@@ -13,11 +15,11 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    SharedPreferences.setMockInitialValues({});
-
-    final controller = InventoryController();
+    final controller = InventoryController(
+      inventoryService: FakeInventoryService(),
+    );
     addTearDown(controller.dispose);
-    await controller.init();
+    await controller.init(role: 'admin');
     const factoryName =
         'VERY LONG SLEEPER FACTORY NAME FOR A NARROW ANDROID SCREEN';
     await controller.addFactory(
@@ -39,14 +41,13 @@ void main() {
               name: 'Admin User',
               id: 'AD-1002',
             ),
+            fixedSection: InventorySection.sleeper,
           ),
         ),
       ),
     );
     await tester.pump();
 
-    await tester.tap(find.text('SLEEPER'));
-    await tester.pump(const Duration(milliseconds: 100));
     await tester.tap(find.text(factoryName));
     await tester.pump(const Duration(milliseconds: 100));
     await tester.tap(find.text('New Incoming'));

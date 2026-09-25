@@ -9,17 +9,21 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  shared_preferences: ^2.3.2
-  csv: ^6.0.0
   image_picker: ^1.1.2
+  file_picker: ^10.3.10
   google_fonts: ^6.2.1
+  http: ^1.2.2
+  http_parser: ^4.1.2
+  uuid: ^4.5.1
+  pdfrx: ^2.2.24
+  cupertino_icons: ^1.0.8
 
 dev_dependencies:
+  crypto: ^3.0.6
   flutter_lints: ^4.0.0
+  shared_preferences: ^2.3.2
   flutter_test:
     sdk: flutter
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/material_serial_mappings.csv

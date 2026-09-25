@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import '../services/account_request_service.dart';
 import '../theme.dart';
 import '../widgets/brutal.dart';
 import 'new_user_request_view.dart';
 
 class LoginView extends StatefulWidget {
-  final ValueChanged<AuthSession> onLogin;
+  final Future<void> Function(AuthSession) onLogin;
+  final AuthService? authService;
+  final AccountRequestService? accountRequestService;
 
-  const LoginView({super.key, required this.onLogin});
+  const LoginView({
+    super.key,
+    required this.onLogin,
+    this.authService,
+    this.accountRequestService,
+  });
 
   @override
   State<LoginView> createState() => _LoginViewState();
@@ -18,9 +26,16 @@ class _LoginViewState extends State<LoginView> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _authService = AuthService();
+  late final AuthService _authService;
   String? _error;
   bool _submitting = false;
+  bool _obscurePassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _authService = widget.authService ?? AuthService();
+  }
 
   @override
   void dispose() {
@@ -44,17 +59,21 @@ class _LoginViewState extends State<LoginView> {
     if (!mounted) return;
     if (session == null) {
       setState(() {
-        _error = 'Invalid credentials';
+        _error = _authService.lastErrorMessage ?? 'Unable to sign in.';
         _submitting = false;
       });
     } else {
-      widget.onLogin(session);
+      await widget.onLogin(session);
     }
   }
 
   void _openNewUser() {
     Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const NewUserRequestView()),
+      MaterialPageRoute<void>(
+        builder: (_) => NewUserRequestView(
+          service: widget.accountRequestService,
+        ),
+      ),
     );
   }
 
@@ -102,12 +121,12 @@ class _LoginViewState extends State<LoginView> {
                       children: [
                         BrutalTextField(
                           controller: _usernameController,
-                          label: 'Username',
+                          label: 'User ID',
                           hint: 'admin',
                           keyboardType: TextInputType.text,
                           textInputAction: TextInputAction.next,
                           validator: (v) => (v == null || v.isEmpty)
-                              ? 'Username required'
+                              ? 'User ID required'
                               : null,
                         ),
                         const SizedBox(height: 16),
@@ -115,13 +134,28 @@ class _LoginViewState extends State<LoginView> {
                           controller: _passwordController,
                           label: 'Password',
                           hint: 'password',
-                          obscureText: true,
+                          obscureText: _obscurePassword,
+                          suffixIcon: IconButton(
+                            tooltip: _obscurePassword
+                                ? 'Show password'
+                                : 'Hide password',
+                            icon: Icon(_obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined),
+                            onPressed: () => setState(
+                                () => _obscurePassword = !_obscurePassword),
+                          ),
                           textInputAction: TextInputAction.done,
                           validator: (v) => (v == null || v.isEmpty)
                               ? 'Password required'
                               : null,
                           onChanged: (_) {
-                            if (_submitting) setState(() => _submitting = false);
+                            if (_submitting) {
+                              setState(() => _submitting = false);
+                            }
+                          },
+                          onSubmitted: (_) {
+                            if (!_submitting) _submit();
                           },
                         ),
                         const SizedBox(height: 24),
@@ -166,8 +200,8 @@ class _LoginViewState extends State<LoginView> {
                   const SizedBox(height: 24),
                   const Divider(color: kBorder),
                   const SizedBox(height: 12),
-                  MonoLabel(
-                    'Test Accounts:\nsuperadmin / password\nadmin / password\nviewer / password',
+                  const MonoLabel(
+                    'Use your approved warehouse account',
                     size: 9,
                     color: kGray400,
                   ),

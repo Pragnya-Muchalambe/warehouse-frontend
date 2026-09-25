@@ -41,6 +41,25 @@ String _formatDate(DateTime date) {
   return '${local.day} ${_months[local.month - 1]} ${local.year}';
 }
 
+String? _purchaseOrderError(
+  int incoming,
+  DateTime? expected,
+  PurchaseOrderStatus status,
+) {
+  if (status == PurchaseOrderStatus.none) {
+    return incoming == 0 && expected == null
+        ? null
+        : 'No Incoming Order requires zero incoming quantity and no date.';
+  }
+  if (incoming < 1) {
+    return 'Select an incoming quantity greater than zero.';
+  }
+  if (status == PurchaseOrderStatus.ordered && expected == null) {
+    return 'Ordered stock requires an expected availability date.';
+  }
+  return null;
+}
+
 class InventoryView extends StatefulWidget {
   final InventoryController controller;
   final AuthSession session;
@@ -50,6 +69,7 @@ class InventoryView extends StatefulWidget {
   /// selector is hidden for the Viewer via [showSectionTabs].
   final InventorySection? initialSection;
   final bool showSectionTabs;
+  final ValueChanged<String?>? onOpenSleeperActions;
 
   const InventoryView({
     super.key,
@@ -57,6 +77,7 @@ class InventoryView extends StatefulWidget {
     required this.session,
     this.initialSection,
     this.showSectionTabs = true,
+    this.onOpenSleeperActions,
   });
 
   @override
@@ -70,6 +91,7 @@ class _InventoryViewState extends State<InventoryView> {
   bool _frequentOnly = false;
   _InventorySort _sort = _InventorySort.recentSearched;
   String? _selectedFactoryId;
+  String? _deletingFactoryId;
 
   @override
   void initState() {
@@ -94,6 +116,9 @@ class _InventoryViewState extends State<InventoryView> {
   // superadmin and admin may manage materials; viewer stays read-only.
   bool get _canManage =>
       widget.session.role == 'superadmin' || widget.session.role == 'admin';
+
+  bool get _canDeleteFactory => widget.session.role == 'superadmin';
+  bool get _factoryDeletionSupported => _controller.supportsFactoryDeletion;
 
   List<InventoryItem> get _sectionItems =>
       _controller.itemsInSection(_controller.activeSection);
@@ -249,32 +274,25 @@ class _InventoryViewState extends State<InventoryView> {
         .any((m) => (_linkedItem(m.id)?.searchFrequency ?? 0) > 0);
   }
 
-  void _onSearchChanged(String value) {
+  Future<void> _onSearchChanged(String value) async {
     setState(() => _searchTerm = value);
     final term = value.toLowerCase().trim();
     if (term.isEmpty || term == _lastRegisteredTerm) return;
     final openFactory = _openFactory;
+    if (openFactory != null) return;
     final List<String> ids;
-    if (openFactory != null) {
-      // Search is scoped to the open factory's materials; hits are linked to
-      // main inventory by PL where a matching material exists.
-      ids = openFactory.materials
-          .where((m) =>
-              m.id.toLowerCase().contains(term) ||
-              m.name.toLowerCase().contains(term))
-          .map((m) => m.id)
-          .toList();
-    } else {
-      ids = _sectionItems
-          .where((item) =>
-              item.id.toLowerCase().contains(term) ||
-              item.name.toLowerCase().contains(term))
-          .map((m) => m.id)
-          .toList();
-    }
+    ids = _sectionItems
+        .where((item) =>
+            item.id.toLowerCase().contains(term) ||
+            item.name.toLowerCase().contains(term))
+        .map((m) => m.id)
+        .toList();
     if (ids.isEmpty) return;
     _lastRegisteredTerm = term;
-    _controller.registerSearch(ids);
+    final registered = await _controller.registerSearch(ids);
+    if (!registered && mounted && _lastRegisteredTerm == term) {
+      setState(() => _lastRegisteredTerm = null);
+    }
   }
 
   void _selectSection(InventorySection section) {
@@ -286,6 +304,7 @@ class _InventoryViewState extends State<InventoryView> {
   }
 
   void _enterFactory(String id) {
+    widget.onOpenSleeperActions?.call(id);
     setState(() {
       _selectedFactoryId = id;
       _searchTerm = '';
@@ -296,6 +315,7 @@ class _InventoryViewState extends State<InventoryView> {
   }
 
   void _closeFactory() {
+    widget.onOpenSleeperActions?.call(null);
     setState(() {
       _selectedFactoryId = null;
       _searchTerm = '';
@@ -331,6 +351,7 @@ class _InventoryViewState extends State<InventoryView> {
               ? 'PL Number already exists'
               : null;
         },
+        failureMessage: () => _controller.lastErrorMessage,
         onSubmit: _controller.addMaterial,
       ),
     );
@@ -357,6 +378,7 @@ class _InventoryViewState extends State<InventoryView> {
               ? 'PL Number already exists'
               : null;
         },
+        failureMessage: () => _controller.lastErrorMessage,
         onSubmit: ({
           required String id,
           required String name,
@@ -366,6 +388,7 @@ class _InventoryViewState extends State<InventoryView> {
           required int incomingQuantity,
           required DateTime? expectedAvailabilityDate,
           required PurchaseOrderStatus purchaseOrderStatus,
+          String? reason,
         }) =>
             _controller.editMaterial(
           originalId: item.id,
@@ -377,6 +400,7 @@ class _InventoryViewState extends State<InventoryView> {
           incomingQuantity: incomingQuantity,
           expectedAvailabilityDate: expectedAvailabilityDate,
           purchaseOrderStatus: purchaseOrderStatus,
+          reason: reason,
         ),
       ),
     );
@@ -400,6 +424,7 @@ class _InventoryViewState extends State<InventoryView> {
               ? 'PL Number already exists in this factory'
               : null;
         },
+        failureMessage: () => _controller.lastErrorMessage,
         onSubmit: ({
           required String id,
           required String name,
@@ -408,6 +433,7 @@ class _InventoryViewState extends State<InventoryView> {
           required int incomingQuantity,
           required DateTime? expectedAvailabilityDate,
           required PurchaseOrderStatus purchaseOrderStatus,
+          String? reason,
         }) =>
             _controller.editFactoryMaterial(
           factoryId: factory.id,
@@ -419,6 +445,7 @@ class _InventoryViewState extends State<InventoryView> {
           incomingQuantity: incomingQuantity,
           expectedAvailabilityDate: expectedAvailabilityDate,
           purchaseOrderStatus: purchaseOrderStatus,
+          reason: reason,
         ),
       ),
     );
@@ -440,6 +467,7 @@ class _InventoryViewState extends State<InventoryView> {
               ? 'PL Number already exists in this factory'
               : null;
         },
+        failureMessage: () => _controller.lastErrorMessage,
         onSubmit: ({
           required String id,
           required String name,
@@ -448,6 +476,7 @@ class _InventoryViewState extends State<InventoryView> {
           required int incomingQuantity,
           required DateTime? expectedAvailabilityDate,
           required PurchaseOrderStatus purchaseOrderStatus,
+          String? reason,
         }) =>
             _controller.addFactoryMaterial(
           factoryId: factory.id,
@@ -458,6 +487,7 @@ class _InventoryViewState extends State<InventoryView> {
           incomingQuantity: incomingQuantity,
           expectedAvailabilityDate: expectedAvailabilityDate,
           purchaseOrderStatus: purchaseOrderStatus,
+          reason: reason,
         ),
       ),
     );
@@ -471,8 +501,47 @@ class _InventoryViewState extends State<InventoryView> {
       shape: const RoundedRectangleBorder(),
       builder: (context) => _FactoryFormSheet(
         onSubmit: _controller.addFactory,
+        failureMessage: () => _controller.lastErrorMessage,
       ),
     );
+  }
+
+  Future<void> _confirmDeleteFactory(WarehouseFactory factory) async {
+    if (!_canDeleteFactory ||
+        !_factoryDeletionSupported ||
+        _deletingFactoryId != null) {
+      return;
+    }
+    final factoryId = factory.id;
+    final factoryName = factory.name;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (_) => _DeleteFactoryDialog(factoryName: factoryName),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+
+    final wasSelected = _selectedFactoryId == factoryId;
+    setState(() {
+      _deletingFactoryId = factoryId;
+      if (wasSelected) _selectedFactoryId = null;
+    });
+    if (wasSelected) widget.onOpenSleeperActions?.call(null);
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+
+    final deleted = await _controller.deleteFactory(factoryId);
+    if (!mounted) return;
+    setState(() {
+      _deletingFactoryId = null;
+      if (!deleted && wasSelected) _selectedFactoryId = factoryId;
+    });
+    if (!deleted && wasSelected) widget.onOpenSleeperActions?.call(factoryId);
+    final message = deleted
+        ? _controller.lastErrorMessage ?? 'Factory deleted.'
+        : _controller.lastErrorMessage ?? 'Unable to delete factory.';
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -535,6 +604,22 @@ class _InventoryViewState extends State<InventoryView> {
                         onPressed: () =>
                             _openAddFactoryMaterialSheet(openFactory),
                       ),
+                    if (isFactoryMaterials &&
+                        _canDeleteFactory &&
+                        _factoryDeletionSupported)
+                      BrutalButton(
+                        label: _deletingFactoryId == openFactory.id
+                            ? 'DELETING...'
+                            : 'DELETE FACTORY',
+                        icon: Icons.delete_outline,
+                        iconSize: 16,
+                        allowLabelWrap: true,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        onPressed: _deletingFactoryId == null
+                            ? () => _confirmDeleteFactory(openFactory)
+                            : null,
+                      ),
                     if (isFactoryMaterials)
                       BrutalButton(
                         label: 'BACK TO SLEEPER',
@@ -567,7 +652,7 @@ class _InventoryViewState extends State<InventoryView> {
                       ),
                   ];
 
-                  if (isFactoryMaterials && constraints.maxWidth < 600) {
+                  if (isFactoryMaterials && constraints.maxWidth < 1100) {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -644,6 +729,13 @@ class _InventoryViewState extends State<InventoryView> {
   }
 
   Widget _buildContent() {
+    if (_controller.lastErrorMessage != null &&
+        _controller.inventory.isEmpty &&
+        _controller.factories.isEmpty) {
+      return Center(
+        child: MonoLabel(_controller.lastErrorMessage!, color: kRed),
+      );
+    }
     if (_showingFactoryList) return _buildFactoryList();
     if (_openFactory != null) return _buildFactoryMaterialsContent();
     if (_frequentOnly && !_hasSearchHistory) {
@@ -690,6 +782,12 @@ class _InventoryViewState extends State<InventoryView> {
         return _FactoryCard(
           factory: factory,
           onTap: () => _enterFactory(factory.id),
+          onDelete: _canDeleteFactory &&
+                  _factoryDeletionSupported &&
+                  _deletingFactoryId == null
+              ? () => _confirmDeleteFactory(factory)
+              : null,
+          deleting: _deletingFactoryId == factory.id,
         );
       },
     );
@@ -751,6 +849,77 @@ class _InventoryViewState extends State<InventoryView> {
           onEdit: () => _openEditSheet(item),
         );
       },
+    );
+  }
+}
+
+class _DeleteFactoryDialog extends StatefulWidget {
+  final String factoryName;
+
+  const _DeleteFactoryDialog({required this.factoryName});
+
+  @override
+  State<_DeleteFactoryDialog> createState() => _DeleteFactoryDialogState();
+}
+
+class _DeleteFactoryDialogState extends State<_DeleteFactoryDialog> {
+  late final TextEditingController _confirmationController;
+  bool _matches = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _confirmationController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _confirmationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Delete Factory'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This removes ${widget.factoryName} from active local factory lists. Existing transaction, request, and audit records are retained.',
+              ),
+              const SizedBox(height: 12),
+              Text('Type ${widget.factoryName} exactly to confirm.'),
+              const SizedBox(height: 8),
+              TextField(
+                key: const ValueKey('factory-delete-confirmation'),
+                controller: _confirmationController,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Factory name'),
+                onChanged: (value) {
+                  final matches = value == widget.factoryName;
+                  if (matches != _matches) setState(() => _matches = matches);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          key: const ValueKey('confirm-factory-delete'),
+          onPressed: _matches ? () => Navigator.of(context).pop(true) : null,
+          child: const Text('Delete Factory'),
+        ),
+      ],
     );
   }
 }
@@ -1115,6 +1284,7 @@ class _NoMatches extends StatelessWidget {
 class _MaterialFormSheet extends StatefulWidget {
   final InventoryItem? item;
   final String? Function(String value) validatePl;
+  final String? Function() failureMessage;
   final Future<bool> Function({
     required String id,
     required String name,
@@ -1124,6 +1294,7 @@ class _MaterialFormSheet extends StatefulWidget {
     required int incomingQuantity,
     required DateTime? expectedAvailabilityDate,
     required PurchaseOrderStatus purchaseOrderStatus,
+    String? reason,
   }) onSubmit;
 
   /// Hide the Depot/Sleeper/Both picker (Admin Depot-only flow). The section
@@ -1136,6 +1307,7 @@ class _MaterialFormSheet extends StatefulWidget {
   const _MaterialFormSheet({
     required this.item,
     required this.validatePl,
+    required this.failureMessage,
     required this.onSubmit,
     this.showSectionPicker = true,
     this.title,
@@ -1152,6 +1324,7 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
   late final TextEditingController _totalController;
   late final TextEditingController _biController;
   late final TextEditingController _incomingController;
+  late final TextEditingController _reasonController;
   late InventorySection _section;
   DateTime? _expectedDate;
   late PurchaseOrderStatus _poStatus;
@@ -1171,6 +1344,7 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
         TextEditingController(text: item?.biIssued.toString() ?? '');
     _incomingController =
         TextEditingController(text: item?.incomingQuantity.toString() ?? '0');
+    _reasonController = TextEditingController();
     _expectedDate = item?.expectedAvailabilityDate;
     _poStatus = item?.purchaseOrderStatus ?? PurchaseOrderStatus.none;
     _section = item?.section ?? InventorySection.depot;
@@ -1183,6 +1357,7 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
     _totalController.dispose();
     _biController.dispose();
     _incomingController.dispose();
+    _reasonController.dispose();
     super.dispose();
   }
 
@@ -1211,6 +1386,7 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
     final parsed = int.tryParse(v);
     if (parsed == null) return 'Enter a valid number';
     if (parsed < 0) return 'Must be zero or more';
+    if (parsed > 2147483647) return 'Must be 2147483647 or less';
     return null;
   }
 
@@ -1219,21 +1395,46 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     final pl = _plController.text.trim();
+    final total = int.parse(_totalController.text.trim());
+    final biIssued = int.parse(_biController.text.trim());
+    if (biIssued > total) {
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('BI Issued cannot exceed total quantity.')));
+      return;
+    }
+    final incoming = int.parse(_incomingController.text.trim());
+    final planningError =
+        _purchaseOrderError(incoming, _expectedDate, _poStatus);
+    if (planningError != null) {
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(planningError)),
+      );
+      return;
+    }
     final ok = await widget.onSubmit(
       id: pl,
       name: _nameController.text.trim(),
       section: _section,
-      total: int.parse(_totalController.text.trim()),
-      biIssued: int.parse(_biController.text.trim()),
-      incomingQuantity: int.parse(_incomingController.text.trim()),
+      total: total,
+      biIssued: biIssued,
+      incomingQuantity: incoming,
       expectedAvailabilityDate: _expectedDate,
       purchaseOrderStatus: _poStatus,
+      reason: _reasonController.text.trim().isEmpty
+          ? null
+          : _reasonController.text.trim(),
     );
     if (!mounted) return;
     if (!ok) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Duplicate PL Number: $pl')),
+        SnackBar(
+          content: Text(
+            widget.failureMessage() ?? 'Could not save material: $pl',
+          ),
+        ),
       );
       return;
     }
@@ -1344,8 +1545,19 @@ class _MaterialFormSheetState extends State<_MaterialFormSheet> {
               const SizedBox(height: 16),
               _PurchaseOrderStatusPicker(
                 value: _poStatus,
-                onChanged: (s) => setState(() => _poStatus = s),
+                onChanged: (status) => setState(() {
+                  _poStatus = status;
+                  if (status == PurchaseOrderStatus.none) {
+                    _incomingController.text = '0';
+                    _expectedDate = null;
+                  }
+                }),
               ),
+              if (_isEdit) ...[
+                const SizedBox(height: 16),
+                BrutalTextField(
+                    label: 'Reason (Optional)', controller: _reasonController),
+              ],
               const SizedBox(height: 24),
               Row(
                 children: [
@@ -1414,10 +1626,14 @@ class _SectionPicker extends StatelessWidget {
 class _FactoryCard extends StatefulWidget {
   final WarehouseFactory factory;
   final VoidCallback onTap;
+  final VoidCallback? onDelete;
+  final bool deleting;
 
   const _FactoryCard({
     required this.factory,
     required this.onTap,
+    this.onDelete,
+    this.deleting = false,
   });
 
   @override
@@ -1487,6 +1703,21 @@ class _FactoryCardState extends State<_FactoryCard> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                if (widget.onDelete != null || widget.deleting) ...[
+                  IconButton(
+                    tooltip:
+                        widget.deleting ? 'Deleting factory' : 'Delete factory',
+                    onPressed: widget.deleting ? null : widget.onDelete,
+                    icon: widget.deleting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete_outline, size: 18),
+                  ),
+                  const SizedBox(width: 2),
+                ],
                 const Icon(Icons.chevron_right, size: 18, color: kInk),
               ],
             ),
@@ -1630,8 +1861,12 @@ class _FactoryMaterialEntry {
 
 class _FactoryFormSheet extends StatefulWidget {
   final _FactorySubmit onSubmit;
+  final String? Function() failureMessage;
 
-  const _FactoryFormSheet({required this.onSubmit});
+  const _FactoryFormSheet({
+    required this.onSubmit,
+    required this.failureMessage,
+  });
 
   @override
   State<_FactoryFormSheet> createState() => _FactoryFormSheetState();
@@ -1677,6 +1912,7 @@ class _FactoryFormSheetState extends State<_FactoryFormSheet> {
     final parsed = int.tryParse(v);
     if (parsed == null) return 'Enter a valid number';
     if (parsed < 0) return 'Must be zero or more';
+    if (parsed > 2147483647) return 'Must be 2147483647 or less';
     return null;
   }
 
@@ -1692,6 +1928,14 @@ class _FactoryFormSheetState extends State<_FactoryFormSheet> {
               biIssued: int.tryParse(e.biIssued.text.trim()) ?? 0,
             ))
         .toList();
+    if (materials.any((material) => material.biIssued > material.total)) {
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('BI Issued cannot exceed total quantity.')),
+      );
+      return;
+    }
     final ok = await widget.onSubmit(
       name: _nameController.text.trim(),
       location: _locationController.text.trim(),
@@ -1701,9 +1945,19 @@ class _FactoryFormSheetState extends State<_FactoryFormSheet> {
     if (!ok) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Factory name is required')),
+        SnackBar(
+          content: Text(
+            widget.failureMessage() ?? 'Could not create the factory.',
+          ),
+        ),
       );
       return;
+    }
+    final message = widget.failureMessage();
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     }
     Navigator.of(context).pop();
   }
@@ -1754,8 +2008,9 @@ class _FactoryFormSheetState extends State<_FactoryFormSheet> {
             children: [
               Expanded(
                 child: BrutalTextField(
-                  label: 'PL (Optional)',
+                  label: 'PL Number',
                   controller: entry.pl,
+                  validator: (v) => _validateRequired(v, 'PL Number'),
                 ),
               ),
               const SizedBox(width: 8),
@@ -2124,6 +2379,7 @@ class _FactoryMaterialFormSheet extends StatefulWidget {
   final String factoryName;
   final FactoryMaterial? material;
   final String? Function(String value) validatePl;
+  final String? Function() failureMessage;
   final Future<bool> Function({
     required String id,
     required String name,
@@ -2132,12 +2388,14 @@ class _FactoryMaterialFormSheet extends StatefulWidget {
     required int incomingQuantity,
     required DateTime? expectedAvailabilityDate,
     required PurchaseOrderStatus purchaseOrderStatus,
+    String? reason,
   }) onSubmit;
 
   const _FactoryMaterialFormSheet({
     required this.factoryName,
     required this.material,
     required this.validatePl,
+    required this.failureMessage,
     required this.onSubmit,
   });
 
@@ -2153,6 +2411,7 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
   late final TextEditingController _totalController;
   late final TextEditingController _biController;
   late final TextEditingController _incomingController;
+  late final TextEditingController _reasonController;
   DateTime? _expectedDate;
   late PurchaseOrderStatus _poStatus;
   bool _saving = false;
@@ -2169,6 +2428,7 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
         TextEditingController(text: material?.biIssued.toString() ?? '0');
     _incomingController = TextEditingController(
         text: material?.incomingQuantity.toString() ?? '0');
+    _reasonController = TextEditingController();
     _expectedDate = material?.expectedAvailabilityDate;
     _poStatus = material?.purchaseOrderStatus ?? PurchaseOrderStatus.none;
   }
@@ -2180,6 +2440,7 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
     _totalController.dispose();
     _biController.dispose();
     _incomingController.dispose();
+    _reasonController.dispose();
     super.dispose();
   }
 
@@ -2215,21 +2476,46 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
     if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
+    final total = int.parse(_totalController.text.trim());
+    final biIssued = int.parse(_biController.text.trim());
+    if (biIssued > total) {
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('BI Issued cannot exceed total quantity.')));
+      return;
+    }
+    final incoming = int.parse(_incomingController.text.trim());
+    final planningError =
+        _purchaseOrderError(incoming, _expectedDate, _poStatus);
+    if (planningError != null) {
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(planningError)),
+      );
+      return;
+    }
     final ok = await widget.onSubmit(
       id: _plController.text.trim(),
       name: _nameController.text.trim(),
-      total: int.parse(_totalController.text.trim()),
-      biIssued: int.parse(_biController.text.trim()),
-      incomingQuantity: int.parse(_incomingController.text.trim()),
+      total: total,
+      biIssued: biIssued,
+      incomingQuantity: incoming,
       expectedAvailabilityDate: _expectedDate,
       purchaseOrderStatus: _poStatus,
+      reason: _reasonController.text.trim().isEmpty
+          ? null
+          : _reasonController.text.trim(),
     );
     if (!mounted) return;
     if (!ok) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('Duplicate PL Number: ${_plController.text.trim()}')),
+          content: Text(
+            widget.failureMessage() ??
+                'Could not save material: ${_plController.text.trim()}',
+          ),
+        ),
       );
       return;
     }
@@ -2341,8 +2627,19 @@ class _FactoryMaterialFormSheetState extends State<_FactoryMaterialFormSheet> {
               const SizedBox(height: 16),
               _PurchaseOrderStatusPicker(
                 value: _poStatus,
-                onChanged: (s) => setState(() => _poStatus = s),
+                onChanged: (status) => setState(() {
+                  _poStatus = status;
+                  if (status == PurchaseOrderStatus.none) {
+                    _incomingController.text = '0';
+                    _expectedDate = null;
+                  }
+                }),
               ),
+              if (widget.material != null) ...[
+                const SizedBox(height: 16),
+                BrutalTextField(
+                    label: 'Reason (Optional)', controller: _reasonController),
+              ],
               const SizedBox(height: 24),
               Row(
                 children: [

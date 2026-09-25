@@ -60,17 +60,19 @@ class SectionTabs extends StatelessWidget {
   }
 }
 
-/// All / factory-name filter chips used under the Sleeper Actions & Audit.
+/// All / factory filter chips used under the Sleeper Actions & Audit.
 class FactoryFilterChips extends StatelessWidget {
   final List<WarehouseFactory> factories;
-  final String? selected;
+  final String? selectedFactoryId;
   final ValueChanged<String?> onChanged;
+  final bool includeAll;
 
   const FactoryFilterChips({
     super.key,
     required this.factories,
-    required this.selected,
+    required this.selectedFactoryId,
     required this.onChanged,
+    this.includeAll = true,
   });
 
   @override
@@ -79,12 +81,13 @@ class FactoryFilterChips extends StatelessWidget {
       spacing: 8,
       runSpacing: 8,
       children: [
-        _chip('ALL', selected == null, () => onChanged(null)),
+        if (includeAll)
+          _chip('ALL', selectedFactoryId == null, () => onChanged(null)),
         for (final factory in factories)
           _chip(
             factory.name,
-            selected == factory.name,
-            () => onChanged(factory.name),
+            selectedFactoryId == factory.id,
+            () => onChanged(factory.id),
           ),
       ],
     );

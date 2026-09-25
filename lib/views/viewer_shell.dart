@@ -2,14 +2,23 @@ import 'package:flutter/material.dart';
 
 import '../controllers/inventory_controller.dart';
 import '../models/inventory_item.dart';
+import '../presentation.dart';
 import '../services/auth_service.dart';
+import '../services/request_service.dart';
 import '../theme.dart';
 import '../widgets/brutal.dart';
 import 'inventory_view.dart';
 import 'viewer_history_view.dart';
 import 'viewer_requests_view.dart';
 
-enum _ViewerPage { depot, sleeper, requests, history }
+enum _ViewerPage {
+  depot,
+  sleeperFactories,
+  requests,
+  history,
+  sleeperRequests,
+  sleeperHistory,
+}
 
 /// Viewer-only application shell. Branched in `main.dart` when the logged-in
 /// role is `viewer`. Admin/Superadmin keep using [HomeShell] untouched.
@@ -17,12 +26,14 @@ class ViewerShell extends StatefulWidget {
   final AuthSession session;
   final InventoryController inventoryController;
   final VoidCallback onLogout;
+  final RequestService? requestService;
 
   const ViewerShell({
     super.key,
     required this.session,
     required this.inventoryController,
     required this.onLogout,
+    this.requestService,
   });
 
   @override
@@ -32,17 +43,44 @@ class ViewerShell extends StatefulWidget {
 class _ViewerShellState extends State<ViewerShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   _ViewerPage _page = _ViewerPage.depot;
+  int _depotHistoryBadge = 0;
+  int _sleeperHistoryBadge = 0;
+  String? _sleeperHistoryFactoryId;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshHistoryBadges();
+  }
+
+  Future<void> _refreshHistoryBadges() async {
+    final service = widget.requestService;
+    if (service == null) return;
+    final counts = await Future.wait([
+      service.unseenDecisionCount(widget.session.id, 'Depot'),
+      service.unseenDecisionCount(widget.session.id, 'Sleeper'),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _depotHistoryBadge = counts[0];
+      _sleeperHistoryBadge = counts[1];
+    });
+  }
 
   String get _pageLabel {
     switch (_page) {
       case _ViewerPage.depot:
         return 'DEPOT INVENTORY';
-      case _ViewerPage.sleeper:
-        return 'SLEEPER';
+      case _ViewerPage.sleeperFactories:
+        return 'SLEEPER FACTORIES';
       case _ViewerPage.requests:
         return 'REQUESTS';
       case _ViewerPage.history:
         return 'HISTORY';
+      case _ViewerPage.sleeperRequests:
+        return 'SLEEPER REQUESTS';
+      case _ViewerPage.sleeperHistory:
+        return 'SLEEPER HISTORY';
     }
   }
 
@@ -64,7 +102,7 @@ class _ViewerShellState extends State<ViewerShell> {
           initialSection: InventorySection.depot,
           showSectionTabs: false,
         );
-      case _ViewerPage.sleeper:
+      case _ViewerPage.sleeperFactories:
         return InventoryView(
           key: const ValueKey('viewer-sleeper'),
           controller: controller,
@@ -76,9 +114,36 @@ class _ViewerShellState extends State<ViewerShell> {
         return ViewerRequestsView(
           controller: controller,
           session: widget.session,
+          requestService: widget.requestService,
+          onAllRequestsSubmitted: (_) =>
+              setState(() => _page = _ViewerPage.history),
         );
       case _ViewerPage.history:
-        return ViewerHistoryView(session: widget.session);
+        return ViewerHistoryView(
+          session: widget.session,
+          section: 'Depot',
+          requestService: widget.requestService,
+          onLoaded: _refreshHistoryBadges,
+        );
+      case _ViewerPage.sleeperRequests:
+        return ViewerRequestsView(
+          controller: controller,
+          session: widget.session,
+          section: 'Sleeper',
+          requestService: widget.requestService,
+          onAllRequestsSubmitted: (factoryId) => setState(() {
+            _sleeperHistoryFactoryId = factoryId;
+            _page = _ViewerPage.sleeperHistory;
+          }),
+        );
+      case _ViewerPage.sleeperHistory:
+        return ViewerHistoryView(
+          session: widget.session,
+          section: 'Sleeper',
+          factoryId: _sleeperHistoryFactoryId,
+          requestService: widget.requestService,
+          onLoaded: _refreshHistoryBadges,
+        );
     }
   }
 
@@ -101,8 +166,7 @@ class _ViewerShellState extends State<ViewerShell> {
               ],
             ),
           ),
-          bottomNavigationBar:
-              _page == _ViewerPage.sleeper ? null : _buildFooter(),
+          bottomNavigationBar: _buildFooter(),
         );
       },
     );
@@ -185,7 +249,7 @@ class _ViewerShellState extends State<ViewerShell> {
                     children: [
                       Text(
                         session.name.isNotEmpty
-                            ? session.name
+                            ? displayName(session.name)
                             : session.username.toUpperCase(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -226,8 +290,8 @@ class _ViewerShellState extends State<ViewerShell> {
                 _DrawerItem(
                   icon: Icons.factory_outlined,
                   label: 'SLEEPER',
-                  active: _page == _ViewerPage.sleeper,
-                  onTap: () => _go(_ViewerPage.sleeper),
+                  active: _inSleeperArea,
+                  onTap: () => _go(_ViewerPage.sleeperFactories),
                 ),
               ],
             ),
@@ -260,6 +324,7 @@ class _ViewerShellState extends State<ViewerShell> {
   }
 
   Widget _buildFooter() {
+    final sleeper = _inSleeperArea;
     return Material(
       color: kSurface,
       child: Container(
@@ -271,24 +336,37 @@ class _ViewerShellState extends State<ViewerShell> {
           child: Row(
             children: [
               _ViewerNavItem(
-                label: 'INVENTORY',
-                icon: Icons.inventory_2_outlined,
-                activeIcon: Icons.inventory_2,
-                isActive: _page == _ViewerPage.depot,
-                onTap: () => setState(() => _page = _ViewerPage.depot),
+                label: sleeper ? 'FACTORIES' : 'INVENTORY',
+                icon: sleeper
+                    ? Icons.factory_outlined
+                    : Icons.inventory_2_outlined,
+                activeIcon: sleeper ? Icons.factory : Icons.inventory_2,
+                isActive: sleeper
+                    ? _page == _ViewerPage.sleeperFactories
+                    : _page == _ViewerPage.depot,
+                onTap: () => setState(() => _page =
+                    sleeper ? _ViewerPage.sleeperFactories : _ViewerPage.depot),
               ),
               _ViewerNavItem(
                 label: 'REQUESTS',
                 icon: Icons.outbox_outlined,
                 activeIcon: Icons.outbox,
-                isActive: _page == _ViewerPage.requests,
-                onTap: () => setState(() => _page = _ViewerPage.requests),
+                isActive: sleeper
+                    ? _page == _ViewerPage.sleeperRequests
+                    : _page == _ViewerPage.requests,
+                onTap: () => setState(() => _page = sleeper
+                    ? _ViewerPage.sleeperRequests
+                    : _ViewerPage.requests),
               ),
               _ViewerNavItem(
                 label: 'HISTORY',
                 icon: Icons.history,
-                isActive: _page == _ViewerPage.history,
-                onTap: () => setState(() => _page = _ViewerPage.history),
+                badgeCount: sleeper ? _sleeperHistoryBadge : _depotHistoryBadge,
+                isActive: sleeper
+                    ? _page == _ViewerPage.sleeperHistory
+                    : _page == _ViewerPage.history,
+                onTap: () => setState(() => _page =
+                    sleeper ? _ViewerPage.sleeperHistory : _ViewerPage.history),
               ),
             ],
           ),
@@ -296,6 +374,14 @@ class _ViewerShellState extends State<ViewerShell> {
       ),
     );
   }
+
+  bool get _inSleeperArea => switch (_page) {
+        _ViewerPage.sleeperFactories ||
+        _ViewerPage.sleeperRequests ||
+        _ViewerPage.sleeperHistory =>
+          true,
+        _ => false,
+      };
 }
 
 class _DrawerItem extends StatelessWidget {
@@ -341,6 +427,7 @@ class _ViewerNavItem extends StatelessWidget {
   final IconData? activeIcon;
   final bool isActive;
   final VoidCallback onTap;
+  final int badgeCount;
 
   const _ViewerNavItem({
     required this.label,
@@ -348,6 +435,7 @@ class _ViewerNavItem extends StatelessWidget {
     this.activeIcon,
     required this.isActive,
     required this.onTap,
+    this.badgeCount = 0,
   });
 
   @override
@@ -366,10 +454,34 @@ class _ViewerNavItem extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                isActive ? (activeIcon ?? icon) : icon,
-                size: 20,
-                color: isActive ? kSurface : kInk,
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    isActive ? (activeIcon ?? icon) : icon,
+                    size: 20,
+                    color: isActive ? kSurface : kInk,
+                  ),
+                  if (badgeCount > 0)
+                    Positioned(
+                      right: -12,
+                      top: -9,
+                      child: Container(
+                        constraints:
+                            const BoxConstraints(minWidth: 16, minHeight: 16),
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: kRed,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          badgeCount > 99 ? '99+' : '$badgeCount',
+                          style: monoStyle(size: 8, color: kSurface),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 4),
               MonoLabel(

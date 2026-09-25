@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'purchase_order_status.dart';
 
 enum InventorySection {
@@ -25,6 +23,7 @@ enum InventorySection {
 
 class InventoryItem {
   final String id;
+  final String materialNumber;
   final String name;
   final int quantity;
   final String uom;
@@ -37,9 +36,14 @@ class InventoryItem {
   final int incomingQuantity;
   final DateTime? expectedAvailabilityDate;
   final PurchaseOrderStatus purchaseOrderStatus;
+  final int version;
+  final int? _available;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   const InventoryItem({
     required this.id,
+    String? materialNumber,
     required this.name,
     required this.quantity,
     this.uom = 'Pieces',
@@ -52,25 +56,22 @@ class InventoryItem {
     this.incomingQuantity = 0,
     this.expectedAvailabilityDate,
     this.purchaseOrderStatus = PurchaseOrderStatus.none,
-  });
+    this.version = 1,
+    int? available,
+    this.createdAt,
+    this.updatedAt,
+  })  : materialNumber = materialNumber ?? id,
+        _available = available;
 
   /// Quantity currently available: total minus what has already been issued.
-  /// Never negative.
-  int get available => max(quantity - biIssued, 0);
-
-  factory InventoryItem.fromCsvRow(List<dynamic> row) {
-    final id = (row.isNotEmpty ? row[0].toString() : '').trim();
-    final name = (row.length > 1 ? row[1].toString() : '').trim();
-    // Matches the React POC: random stock 0-20 on first seed.
-    return InventoryItem(
-      id: id,
-      name: name,
-      quantity: Random().nextInt(21),
-    );
+  int get available {
+    final value = _available ?? quantity - biIssued;
+    return value < 0 ? 0 : value;
   }
 
   InventoryItem copyWith({
     String? id,
+    String? materialNumber,
     String? name,
     int? quantity,
     String? uom,
@@ -83,9 +84,14 @@ class InventoryItem {
     int? incomingQuantity,
     DateTime? expectedAvailabilityDate,
     PurchaseOrderStatus? purchaseOrderStatus,
+    int? version,
+    int? available,
+    DateTime? createdAt,
+    DateTime? updatedAt,
   }) {
     return InventoryItem(
       id: id ?? this.id,
+      materialNumber: materialNumber ?? this.materialNumber,
       name: name ?? this.name,
       quantity: quantity ?? this.quantity,
       uom: uom ?? this.uom,
@@ -99,6 +105,10 @@ class InventoryItem {
       expectedAvailabilityDate:
           expectedAvailabilityDate ?? this.expectedAvailabilityDate,
       purchaseOrderStatus: purchaseOrderStatus ?? this.purchaseOrderStatus,
+      version: version ?? this.version,
+      available: available ?? _available,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -110,6 +120,7 @@ class InventoryItem {
 
   Map<String, dynamic> toJson() => {
         'id': id,
+        'materialNumber': materialNumber,
         'name': name,
         'quantity': quantity,
         'uom': uom,
@@ -122,11 +133,16 @@ class InventoryItem {
         'incomingQuantity': incomingQuantity,
         'expectedAvailabilityDate': expectedAvailabilityDate?.toIso8601String(),
         'purchaseOrderStatus': purchaseOrderStatus.label,
+        'version': version,
+        'available': available,
+        'createdAt': createdAt?.toIso8601String(),
+        'updatedAt': updatedAt?.toIso8601String(),
       };
 
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
     return InventoryItem(
       id: json['id'] as String,
+      materialNumber: json['materialNumber'] as String?,
       name: json['name'] as String,
       quantity: (json['quantity'] as num?)?.toInt() ?? 0,
       uom: json['uom'] as String? ?? 'Pieces',
@@ -140,6 +156,10 @@ class InventoryItem {
       expectedAvailabilityDate: _parseDate(json['expectedAvailabilityDate']),
       purchaseOrderStatus:
           PurchaseOrderStatus.fromLabel(json['purchaseOrderStatus'] as String?),
+      version: (json['version'] as num?)?.toInt() ?? 1,
+      available: (json['available'] as num?)?.toInt(),
+      createdAt: _parseDate(json['createdAt']),
+      updatedAt: _parseDate(json['updatedAt']),
     );
   }
 

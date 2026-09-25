@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'app_dependencies.dart';
 import 'controllers/inventory_controller.dart';
 import 'services/auth_service.dart';
 import 'theme.dart';
@@ -9,32 +10,47 @@ import 'views/superadmin_shell.dart';
 import 'views/viewer_shell.dart';
 import 'widgets/brutal.dart';
 
-void main() {
-  runApp(const WarehouseApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(
+      WarehouseApp(dependencies: await AppDependencies.loadFromEnvironment()));
 }
 
 class WarehouseApp extends StatefulWidget {
-  const WarehouseApp({super.key});
+  final AppDependencies? dependencies;
+
+  const WarehouseApp({super.key, this.dependencies});
 
   @override
   State<WarehouseApp> createState() => _WarehouseAppState();
 }
 
 class _WarehouseAppState extends State<WarehouseApp> {
-  final InventoryController _inventoryController = InventoryController();
-  final AuthService _authService = AuthService();
+  late final AppDependencies _dependencies;
+  late final InventoryController _inventoryController;
+  late final AuthService _authService;
   AuthSession? _session;
   bool _booting = true;
 
   @override
   void initState() {
     super.initState();
+    _dependencies = widget.dependencies ??
+        (throw StateError('WarehouseApp requires initialized dependencies.'));
+    _inventoryController = _dependencies.controller;
+    _authService = _dependencies.auth;
     _bootstrap();
   }
 
   Future<void> _bootstrap() async {
-    await _inventoryController.init();
     final session = await _authService.getSession();
+    if (session != null) {
+      try {
+        await _inventoryController.init(role: session.role);
+      } catch (_) {
+        // Individual screens remain usable and will surface API errors.
+      }
+    }
     if (mounted) {
       setState(() {
         _session = session;
@@ -43,8 +59,13 @@ class _WarehouseAppState extends State<WarehouseApp> {
     }
   }
 
-  void _handleLogin(AuthSession session) {
-    setState(() => _session = session);
+  Future<void> _handleLogin(AuthSession session) async {
+    try {
+      await _inventoryController.init(role: session.role);
+    } catch (_) {
+      // The authenticated shell can still render with empty collections.
+    }
+    if (mounted) setState(() => _session = session);
   }
 
   Future<void> _handleLogout() async {
@@ -92,7 +113,11 @@ class _WarehouseAppState extends State<WarehouseApp> {
 
     final session = _session;
     if (session == null) {
-      return LoginView(onLogin: _handleLogin);
+      return LoginView(
+        onLogin: _handleLogin,
+        authService: _authService,
+        accountRequestService: _dependencies.accountRequests,
+      );
     }
 
     // Viewer uses its own read-only shell; Admin gets the Admin workflow
@@ -104,6 +129,7 @@ class _WarehouseAppState extends State<WarehouseApp> {
         session: session,
         inventoryController: _inventoryController,
         onLogout: _handleLogout,
+        requestService: _dependencies.requests,
       );
     }
 
@@ -112,13 +138,27 @@ class _WarehouseAppState extends State<WarehouseApp> {
         session: session,
         inventoryController: _inventoryController,
         onLogout: _handleLogout,
+        requestService: _dependencies.requests,
+        transactionFilePicker: _dependencies.transactionFilePicker,
       );
     }
 
-    return SuperadminShell(
-      session: session,
-      inventoryController: _inventoryController,
-      onLogout: _handleLogout,
+    if (session.role == 'superadmin') {
+      return SuperadminShell(
+        session: session,
+        inventoryController: _inventoryController,
+        onLogout: _handleLogout,
+        requestService: _dependencies.requests,
+        accountRequestService: _dependencies.accountRequests,
+        userAccountService: _dependencies.users,
+        transactionFilePicker: _dependencies.transactionFilePicker,
+      );
+    }
+
+    return LoginView(
+      onLogin: _handleLogin,
+      authService: _authService,
+      accountRequestService: _dependencies.accountRequests,
     );
   }
 }
