@@ -587,6 +587,51 @@ void main() {
     expect(client.transactionBody!.containsKey('proofFileId'), isFalse);
   });
 
+  test('uploaded attachment IDs survive transaction failure and are reused',
+      () async {
+    final client = _TransactionClient()..transactionFailuresRemaining = 1;
+    final service = InventoryService(api: ApiClient(httpClient: client));
+    String? billFileId;
+    var proofs = [
+      TransactionAttachment(
+        fileName: 'proof.jpg',
+        bytes: Uint8List.fromList([0xff, 0xd8, 0xff]),
+        contentType: 'image/jpeg',
+      ),
+    ];
+
+    Future<void> submit() => service
+        .createTransaction(
+          type: 'DISPATCH',
+          scope: 'DEPOT',
+          factoryId: null,
+          items: const [
+            CartItem(id: 'T-1', name: 'Material', quantityChange: 1),
+          ],
+          billBytes: Uint8List.fromList('%PDF-1.7'.codeUnits),
+          billName: 'bill.pdf',
+          billFileId: billFileId,
+          onBillUploaded: (id) => billFileId = id,
+          proofs: proofs,
+          onProofUploaded: (index, attachment) => proofs[index] = attachment,
+          person: 'Engineering Team',
+          dateRequested: '2026-09-01',
+          dateLeaving: '2026-09-02',
+          truckNumber: 'KA01AB1234',
+        )
+        .then((_) {});
+
+    await expectLater(submit(), throwsA(isA<ApiException>()));
+    expect(billFileId, 'bill-id');
+    expect(proofs.single.fileId, 'proof-1-id');
+    expect(client.uploadPurposes, ['BILL', 'PROOF']);
+
+    await submit();
+    expect(client.uploadPurposes, ['BILL', 'PROOF']);
+    expect(client.transactionBody!['billFileId'], 'bill-id');
+    expect(client.transactionBody!['proofFileIds'], ['proof-1-id']);
+  });
+
   test('correction supports multiple, empty, and omitted proof updates',
       () async {
     final client = _TransactionClient();
@@ -1081,6 +1126,7 @@ class _TransactionClient extends http.BaseClient {
   final List<String> uploadPurposes = [];
   Map<String, dynamic>? transactionBody;
   int _proofUploads = 0;
+  int transactionFailuresRemaining = 0;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
@@ -1096,6 +1142,18 @@ class _TransactionClient extends http.BaseClient {
 
     final jsonRequest = request as http.Request;
     transactionBody = jsonDecode(jsonRequest.body) as Map<String, dynamic>;
+    if (transactionFailuresRemaining > 0) {
+      transactionFailuresRemaining--;
+      return _jsonResponse({
+        'error': {
+          'code': 'SOURCE_REQUEST_ITEMS_MISMATCH',
+          'message': 'Source request is incompatible.',
+          'details': const [],
+          'retryable': false,
+        },
+        'meta': {'requestId': 'request-id'},
+      }, statusCode: 409);
+    }
     return _jsonResponse({
       'data': {
         'id': 'transaction-uuid',
@@ -1118,10 +1176,13 @@ class _TransactionClient extends http.BaseClient {
     });
   }
 
-  http.StreamedResponse _jsonResponse(Map<String, dynamic> body) {
+  http.StreamedResponse _jsonResponse(
+    Map<String, dynamic> body, {
+    int statusCode = 200,
+  }) {
     return http.StreamedResponse(
       Stream.value(utf8.encode(jsonEncode(body))),
-      200,
+      statusCode,
       headers: {'content-type': 'application/json'},
     );
   }

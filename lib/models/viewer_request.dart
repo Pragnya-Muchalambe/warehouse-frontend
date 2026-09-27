@@ -237,9 +237,12 @@ class ViewerRequest {
       quantity: (json['quantity'] as num?)?.toInt() ?? 0,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
-      section: (json['section'] as String? ?? 'DEPOT').toLowerCase() == 'depot'
-          ? 'Depot'
-          : 'Sleeper',
+      section:
+          (json['module'] as String? ?? json['section'] as String? ?? 'DEPOT')
+                      .toLowerCase() ==
+                  'depot'
+              ? 'Depot'
+              : 'Sleeper',
       factoryId: json['factoryId'] as String?,
       factoryName: json['factoryName'] as String?,
       status: _uiRequestStatus(json['status'] as String?),
@@ -259,6 +262,7 @@ class ViewerRequest {
                 : null,
             fileId: bill['id'] as String? ?? bill['fileId'] as String?,
             contentType: bill['contentType'] as String?,
+            sizeBytes: (bill['sizeBytes'] as num?)?.toInt(),
           ),
         _ => null,
       },

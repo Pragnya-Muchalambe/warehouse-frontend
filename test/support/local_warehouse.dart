@@ -381,7 +381,12 @@ class LocalRequestService extends RequestService {
       List.unmodifiable(store.requests);
 
   @override
-  Future<int> unseenDecisionCount(String viewerId, String section) async {
+  Future<int> unseenDecisionCount(
+    String viewerId,
+    String section, {
+    String? storageViewerId,
+    Iterable<ViewerRequest>? requests,
+  }) async {
     final seen = store.seenDecisions[viewerId] ?? const <String>{};
     return store.requests.where((request) {
       final decided =
@@ -395,7 +400,11 @@ class LocalRequestService extends RequestService {
 
   @override
   Future<void> markDecisionsSeen(
-      String viewerId, String section, Iterable<ViewerRequest> requests) async {
+    String viewerId,
+    String section,
+    Iterable<ViewerRequest> requests, {
+    String? storageViewerId,
+  }) async {
     final seen = store.seenDecisions.putIfAbsent(viewerId, () => <String>{});
     for (final request in requests) {
       if (request.viewerId == viewerId &&
@@ -872,6 +881,9 @@ class LocalInventoryService extends InventoryService {
     required List<CartItem> items,
     required Uint8List billBytes,
     required String billName,
+    String? billFileId,
+    void Function(String fileId)? onBillUploaded,
+    void Function(int index, TransactionAttachment attachment)? onProofUploaded,
     Uint8List? proofBytes,
     String? proofName,
     List<TransactionAttachment> proofs = const [],

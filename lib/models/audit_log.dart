@@ -98,6 +98,9 @@ class AuditLog {
   final Map<String, dynamic>? after;
   final AuditFileMetadata? billFile;
   final AuditFileMetadata? proofFile;
+  final List<AuditFileMetadata> proofFiles;
+  final String? module;
+  final String? topLevelFactoryId;
 
   const AuditLog({
     required this.id,
@@ -112,9 +115,18 @@ class AuditLog {
     this.after,
     this.billFile,
     this.proofFile,
+    this.proofFiles = const [],
+    this.module,
+    this.topLevelFactoryId,
   });
 
-  String? get scope => _snapshotValue('scope');
+  String? get scope =>
+      _snapshotValue('scope') ??
+      switch (module) {
+        'DEPOT' => 'DEPOT',
+        'SLEEPER' => 'FACTORY',
+        _ => null,
+      };
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -130,7 +142,7 @@ class AuditLog {
         if (billFile != null) 'billFile': billFile!.toJson(),
         if (proofFile != null) 'proofFile': proofFile!.toJson(),
       };
-  String? get factoryId => _snapshotValue('factoryId');
+  String? get factoryId => _snapshotValue('factoryId') ?? topLevelFactoryId;
   String? get factoryNameSnapshot => _snapshotValue('factoryNameSnapshot');
 
   String? _snapshotValue(String key) {
@@ -159,6 +171,14 @@ class AuditLog {
       after: _jsonMap(json['after']),
       billFile: _file(json['billFile']),
       proofFile: _file(json['proofFile']),
+      proofFiles: (json['proofFiles'] as List? ?? const [])
+          .whereType<Map>()
+          .map((value) => AuditFileMetadata.fromJson(
+                Map<String, dynamic>.from(value),
+              ))
+          .toList(),
+      module: json['module'] as String?,
+      topLevelFactoryId: json['factoryId'] as String?,
     );
   }
 

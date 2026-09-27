@@ -3,18 +3,49 @@ import 'dart:typed_data';
 
 import 'inventory_item.dart';
 
+enum AttachmentUploadState { pending, uploading, uploaded, failed }
+
 class TransactionAttachment {
   final String fileName;
   final Uint8List? bytes;
   final String? fileId;
   final String? contentType;
+  final int sizeBytes;
+  final AttachmentUploadState uploadState;
+  final String? uploadError;
 
   const TransactionAttachment({
     required this.fileName,
     this.bytes,
     this.fileId,
     this.contentType,
-  });
+    int? sizeBytes,
+    AttachmentUploadState? uploadState,
+    this.uploadError,
+  })  : sizeBytes = sizeBytes ?? 0,
+        uploadState = uploadState ??
+            (fileId == null
+                ? AttachmentUploadState.pending
+                : AttachmentUploadState.uploaded);
+
+  TransactionAttachment copyWith({
+    Uint8List? bytes,
+    String? fileId,
+    bool clearFileId = false,
+    AttachmentUploadState? uploadState,
+    String? uploadError,
+    bool clearUploadError = false,
+  }) =>
+      TransactionAttachment(
+        fileName: fileName,
+        bytes: bytes ?? this.bytes,
+        fileId: clearFileId ? null : (fileId ?? this.fileId),
+        contentType: contentType,
+        sizeBytes: sizeBytes,
+        uploadState: uploadState ?? this.uploadState,
+        uploadError:
+            clearUploadError ? null : (uploadError ?? this.uploadError),
+      );
 
   bool get isPdf =>
       contentType == 'application/pdf' ||
@@ -23,8 +54,9 @@ class TransactionAttachment {
   factory TransactionAttachment.fromApi(Map<String, dynamic> json) =>
       TransactionAttachment(
         fileName: json['fileName'] as String? ?? 'Proof',
-        fileId: json['id'] as String?,
+        fileId: json['id'] as String? ?? json['fileId'] as String?,
         contentType: json['contentType'] as String?,
+        sizeBytes: (json['sizeBytes'] as num?)?.toInt(),
       );
 }
 
@@ -231,7 +263,9 @@ class TransactionLog {
       dateLeaving: json['dateLeaving'] as String?,
       truckNumber: json['truckNumber'] as String?,
       factoryId: json['factoryId'] as String?,
-      billFileId: json['billFileId'] as String?,
+      billFileId: json['billFileId'] as String? ??
+          ((json['billFile'] as Map?)?['id'] as String?) ??
+          ((json['billFile'] as Map?)?['fileId'] as String?),
       proofFileIds: json.containsKey('proofFileIds')
           ? (json['proofFileIds'] as List? ?? const [])
               .whereType<String>()

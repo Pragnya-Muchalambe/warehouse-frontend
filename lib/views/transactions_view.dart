@@ -8,6 +8,7 @@ import '../models/factory.dart';
 import '../models/inventory_item.dart';
 import '../models/transaction_log.dart';
 import '../models/viewer_request.dart';
+import '../presentation.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/request_service.dart';
@@ -18,28 +19,6 @@ import '../widgets/attachment_preview.dart';
 import '../widgets/section_tabs.dart' show FactoryFilterChips;
 
 enum _TransactionForm { incoming, dispatch }
-
-const List<String> _months = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-String _formatTimestamp(DateTime dt) {
-  final d = dt.toLocal();
-  final hh = d.hour.toString().padLeft(2, '0');
-  final mm = d.minute.toString().padLeft(2, '0');
-  return '${d.day} ${_months[d.month - 1]} ${d.year}, $hh:$mm';
-}
 
 class TransactionsView extends StatefulWidget {
   final InventoryController controller;
@@ -60,8 +39,11 @@ class TransactionsView extends StatefulWidget {
     String? dateLeaving,
     String? truckNumber,
     Uint8List? billBytes,
+    String? billFileId,
+    void Function(String fileId)? onBillUploaded,
     Uint8List? proofBytes,
     List<TransactionAttachment> proofs,
+    void Function(int index, TransactionAttachment attachment)? onProofUploaded,
     String? factoryId,
     List<String> sourceRequestIds,
   }) addTransaction;
@@ -101,8 +83,7 @@ class _TransactionsViewState extends State<TransactionsView> {
   DateTime? _dateOfArrival;
   DateTime? _dateRequested;
   DateTime? _dateLeaving;
-  String? _bill;
-  Uint8List? _billBytes;
+  TransactionAttachment? _billAttachment;
   final List<TransactionAttachment> _proofs = [];
   String _searchTerm = '';
   bool _submitting = false;
@@ -140,15 +121,70 @@ class _TransactionsViewState extends State<TransactionsView> {
 
   List<ViewerRequest> get _linkableRequests {
     if (_activeForm != _TransactionForm.dispatch) return const [];
-    final itemIds = _selectedItems.map((item) => item.id).toSet();
+    final quantities = _dispatchQuantities;
     final section = _section == InventorySection.sleeper ? 'Sleeper' : 'Depot';
     return _acceptedRequests
         .where((request) =>
             request.section == section &&
             (_section != InventorySection.sleeper ||
                 request.factoryId == _factoryId) &&
-            itemIds.contains(request.itemId))
+            quantities.containsKey(request.itemId) &&
+            request.quantity > 0 &&
+            request.quantity <= quantities[request.itemId]!)
         .toList();
+  }
+
+  Map<String, int> get _dispatchQuantities => {
+        for (final item in _selectedItems)
+          if (int.tryParse(_qtyControllers[item.id]?.text.trim() ?? '')
+              case final int quantity when quantity > 0)
+            item.id: quantity,
+      };
+
+  bool _canSelectSourceRequest(ViewerRequest candidate) {
+    final capacity = _dispatchQuantities[candidate.itemId] ?? 0;
+    final selected = _acceptedRequests
+        .where((request) =>
+            request.id != candidate.id &&
+            _sourceRequestIds.contains(request.id) &&
+            request.itemId == candidate.itemId)
+        .fold<int>(0, (total, request) => total + request.quantity);
+    return selected + candidate.quantity <= capacity;
+  }
+
+  void _revalidateSourceRequests() {
+    final retained = <String>{};
+    final used = <String, int>{};
+    final eligible = {
+      for (final request in _linkableRequests) request.id: request
+    };
+    for (final id in _sourceRequestIds) {
+      final request = eligible[id];
+      if (request == null) continue;
+      final next = (used[request.itemId] ?? 0) + request.quantity;
+      if (next <= (_dispatchQuantities[request.itemId] ?? 0)) {
+        retained.add(id);
+        used[request.itemId] = next;
+      }
+    }
+    _sourceRequestIds
+      ..clear()
+      ..addAll(retained);
+  }
+
+  bool get _selectedSourceRequestsAreCompatible {
+    final eligible = {
+      for (final request in _linkableRequests) request.id: request,
+    };
+    final used = <String, int>{};
+    for (final id in _sourceRequestIds) {
+      final request = eligible[id];
+      if (request == null) return false;
+      final next = (used[request.itemId] ?? 0) + request.quantity;
+      if (next > (_dispatchQuantities[request.itemId] ?? 0)) return false;
+      used[request.itemId] = next;
+    }
+    return true;
   }
 
   void _selectInitialFactory() {
@@ -222,8 +258,7 @@ class _TransactionsViewState extends State<TransactionsView> {
       _dateOfArrival = null;
       _dateRequested = null;
       _dateLeaving = null;
-      _bill = null;
-      _billBytes = null;
+      _billAttachment = null;
       _proofs.clear();
       _sourceRequestIds.clear();
       _searchTerm = '';
@@ -302,6 +337,7 @@ class _TransactionsViewState extends State<TransactionsView> {
       final parsed = int.tryParse(value.trim());
       final qty = parsed ?? 0;
       _selectedItems[index] = item.copyWith(quantityChange: qty);
+      _revalidateSourceRequests();
     });
   }
 
@@ -322,7 +358,9 @@ class _TransactionsViewState extends State<TransactionsView> {
   }
 
   bool get _canSubmit {
-    if (_submitting || _selectedItems.isEmpty || _billBytes == null) {
+    if (_submitting ||
+        _selectedItems.isEmpty ||
+        _billAttachment?.bytes == null) {
       return false;
     }
     if (_selectedItems.any((item) => _quantityError(item) != null)) {
@@ -344,7 +382,7 @@ class _TransactionsViewState extends State<TransactionsView> {
 
   List<String> get _validationProblems {
     final problems = <String>[];
-    if (_billBytes == null) problems.add('Upload a Bill');
+    if (_billAttachment?.bytes == null) problems.add('Upload a Bill');
     if (_section == InventorySection.sleeper && !_isFactoryScope) {
       problems.add('Select a factory');
     }
@@ -387,7 +425,10 @@ class _TransactionsViewState extends State<TransactionsView> {
 
   void _removeItem(String id) {
     _qtyControllers.remove(id)?.dispose();
-    setState(() => _selectedItems.removeWhere((i) => i.id == id));
+    setState(() {
+      _selectedItems.removeWhere((i) => i.id == id);
+      _revalidateSourceRequests();
+    });
   }
 
   Future<void> _pickAttachment({
@@ -436,7 +477,9 @@ class _TransactionsViewState extends State<TransactionsView> {
     for (final file in files) {
       final extension = file.name.split('.').last.toLowerCase();
       if (!const {'pdf', 'jpg', 'jpeg', 'png', 'webp'}.contains(extension)) {
-        _showMessage('This file type is not supported.');
+        _showMessage(
+          'This file type is not supported. Choose a PDF, JPEG, PNG, or WebP file.',
+        );
         return;
       }
       final bytes = file.bytes;
@@ -452,18 +495,46 @@ class _TransactionsViewState extends State<TransactionsView> {
         _showMessage('Files must be 10 MB or smaller.');
         return;
       }
+      final expectedType = switch (extension) {
+        'pdf' when _startsWith(bytes, const [0x25, 0x50, 0x44, 0x46, 0x2d]) =>
+          'application/pdf',
+        'jpg' ||
+        'jpeg'
+            when bytes.length >= 3 &&
+                bytes[0] == 0xff &&
+                bytes[1] == 0xd8 &&
+                bytes[2] == 0xff =>
+          'image/jpeg',
+        'png'
+            when _startsWith(bytes,
+                const [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) =>
+          'image/png',
+        'webp'
+            when bytes.length >= 12 &&
+                _startsWith(bytes, const [0x52, 0x49, 0x46, 0x46]) &&
+                bytes[8] == 0x57 &&
+                bytes[9] == 0x45 &&
+                bytes[10] == 0x42 &&
+                bytes[11] == 0x50 =>
+          'image/webp',
+        _ => null,
+      };
+      if (expectedType == null) {
+        _showMessage(
+          'The selected file content does not match its PDF, JPEG, PNG, or WebP extension.',
+        );
+        return;
+      }
       attachments.add(TransactionAttachment(
         fileName: file.name,
         bytes: bytes,
-        contentType: extension == 'pdf'
-            ? 'application/pdf'
-            : 'image/${extension == 'jpg' ? 'jpeg' : extension}',
+        contentType: expectedType,
+        sizeBytes: file.size,
       ));
     }
     setState(() {
       if (isBill) {
-        _bill = attachments.first.fileName;
-        _billBytes = attachments.first.bytes;
+        _billAttachment = attachments.first;
       } else if (replaceProofIndex != null) {
         _proofs[replaceProofIndex] = attachments.first;
       } else {
@@ -478,11 +549,18 @@ class _TransactionsViewState extends State<TransactionsView> {
     });
   }
 
+  bool _startsWith(Uint8List bytes, List<int> signature) {
+    if (bytes.length < signature.length) return false;
+    for (var i = 0; i < signature.length; i++) {
+      if (bytes[i] != signature[i]) return false;
+    }
+    return true;
+  }
+
   void _removeAttachment({required bool isBill}) {
     setState(() {
       if (isBill) {
-        _bill = null;
-        _billBytes = null;
+        _billAttachment = null;
       }
     });
   }
@@ -501,11 +579,6 @@ class _TransactionsViewState extends State<TransactionsView> {
     if (picked != null && mounted) {
       setState(() => onPicked(picked));
     }
-  }
-
-  String _formatDate(DateTime d) {
-    final local = d.toLocal();
-    return '${local.day} ${_months[local.month - 1]} ${local.year}';
   }
 
   void _showMessage(String message) {
@@ -536,7 +609,8 @@ class _TransactionsViewState extends State<TransactionsView> {
       _showMessage('All items must have a quantity of 1 or more.');
       return;
     }
-    if (_bill == null || _billBytes == null) {
+    final bill = _billAttachment;
+    if (bill == null || bill.bytes == null) {
       _showMessage(
           'Please upload the Bill before submitting this transaction.');
       return;
@@ -576,6 +650,15 @@ class _TransactionsViewState extends State<TransactionsView> {
           return;
         }
       }
+      final selectedBeforeValidation = Set<String>.of(_sourceRequestIds);
+      _revalidateSourceRequests();
+      if (!setEquals(selectedBeforeValidation, _sourceRequestIds) ||
+          !_selectedSourceRequestsAreCompatible) {
+        _showMessage(
+          'One or more selected requests no longer match this dispatch.',
+        );
+        return;
+      }
     }
 
     setState(() => _submitting = true);
@@ -584,11 +667,26 @@ class _TransactionsViewState extends State<TransactionsView> {
       await widget.addTransaction(
         type: isIncoming ? LogType.incoming.label : LogType.dispatch.label,
         items: parsedItems,
-        bill: _bill!,
-        billBytes: _billBytes,
+        bill: bill.fileName,
+        billBytes: bill.bytes,
+        billFileId: bill.fileId,
+        onBillUploaded: (fileId) {
+          if (!mounted) return;
+          setState(() {
+            _billAttachment = _billAttachment?.copyWith(
+              fileId: fileId,
+              uploadState: AttachmentUploadState.uploaded,
+              clearUploadError: true,
+            );
+          });
+        },
         proof: null,
         proofBytes: null,
         proofs: List.unmodifiable(_proofs),
+        onProofUploaded: (index, attachment) {
+          if (!mounted || index >= _proofs.length) return;
+          setState(() => _proofs[index] = attachment);
+        },
         user: widget.session.username,
         section: _section,
         factoryId: _factoryId,
@@ -600,10 +698,16 @@ class _TransactionsViewState extends State<TransactionsView> {
         dateLeaving: isIncoming ? null : _isoDate(_dateLeaving!),
         truckNumber: truck,
       );
-    } catch (error) {
+    } on ApiException catch (error) {
       if (mounted) {
         setState(() => _submitting = false);
-        _showMessage(error.toString());
+        _showMessage(_transactionErrorMessage(error));
+      }
+      return;
+    } catch (_) {
+      if (mounted) {
+        setState(() => _submitting = false);
+        _showMessage('Unable to submit the transaction. Please try again.');
       }
       return;
     }
@@ -618,6 +722,23 @@ class _TransactionsViewState extends State<TransactionsView> {
 
   String _isoDate(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  String _transactionErrorMessage(ApiException error) => switch (error.code) {
+        'UNSUPPORTED_MEDIA_TYPE' =>
+          'This file type is not supported. Choose a PDF, JPEG, PNG, or WebP file.',
+        'DUPLICATE_FILE' ||
+        'FILE_ALREADY_EXISTS' =>
+          'This attachment already exists, but the server did not return a reusable file ID. Retry after the backend enables duplicate upload reuse.',
+        'SOURCE_REQUEST_ITEMS_MISMATCH' =>
+          'The selected accepted requests do not match the dispatch materials or quantities. Review the fulfilment selection and try again.',
+        'FORBIDDEN' => 'You are not authorized to access this attachment.',
+        'NOT_FOUND' => 'The requested attachment could not be found.',
+        'VERSION_CONFLICT' =>
+          'This record changed on the server. Refresh and try again.',
+        _ => error.statusCode == 0
+            ? error.message
+            : 'Unable to submit the transaction. Please review the form and try again.',
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -929,21 +1050,21 @@ class _TransactionsViewState extends State<TransactionsView> {
             _FormDateButton(
               label: _dateOfArrival == null
                   ? 'SET DATE OF ARRIVAL'
-                  : _formatDate(_dateOfArrival!),
+                  : formatLocalDate(_dateOfArrival!),
               onTap: () => _pickDate(_dateOfArrival, (d) => _dateOfArrival = d),
             ),
           ] else ...[
             _FormDateButton(
               label: _dateRequested == null
                   ? 'SET DATE REQUESTED'
-                  : _formatDate(_dateRequested!),
+                  : formatLocalDate(_dateRequested!),
               onTap: () => _pickDate(_dateRequested, (d) => _dateRequested = d),
             ),
             const SizedBox(height: 12),
             _FormDateButton(
               label: _dateLeaving == null
                   ? 'SET DATE LEAVING DEPOT'
-                  : _formatDate(_dateLeaving!),
+                  : formatLocalDate(_dateLeaving!),
               onTap: () => _pickDate(_dateLeaving, (d) => _dateLeaving = d),
             ),
           ],
@@ -1017,8 +1138,8 @@ class _TransactionsViewState extends State<TransactionsView> {
                 children: [
                   _buildAttachmentCard(
                     label: 'Bill',
-                    file: _bill,
-                    bytes: _billBytes,
+                    file: _billAttachment?.fileName,
+                    bytes: _billAttachment?.bytes,
                     onPick: () => _pickAttachment(isBill: true),
                     onRemove: () => _removeAttachment(isBill: true),
                     requiredAttachment: true,
@@ -1226,14 +1347,19 @@ class _TransactionsViewState extends State<TransactionsView> {
                               contentPadding: EdgeInsets.zero,
                               value: _sourceRequestIds.contains(request.id),
                               title: Text(
-                                '${request.itemName} - ${request.quantity}',
+                                'Viewer: ${request.viewerName.trim().isEmpty ? 'Not available' : displayName(request.viewerName)}\n'
+                                'Viewer ID: ${request.viewerAccountId.trim().isEmpty ? 'Not available' : request.viewerAccountId}\n'
+                                'Material: ${request.itemName.trim().isEmpty ? 'Not available' : request.itemName}\n'
+                                'PL Number: ${request.materialNumber.trim().isEmpty ? 'Not available' : request.materialNumber}\n'
+                                'Requested quantity: ${request.quantity}\n'
+                                'Module: ${request.section}'
+                                '${request.section == 'Sleeper' ? '\nFactory: ${(request.factoryName ?? '').trim().isEmpty ? 'Not available' : request.factoryName}' : ''}',
                                 style: monoStyle(size: 10, color: kInk),
                               ),
-                              subtitle: MonoLabel(
-                                '${request.viewerName} | ${request.materialNumber}',
-                                size: 8,
-                              ),
-                              onChanged: _submitting
+                              onChanged: _submitting ||
+                                      (!_sourceRequestIds
+                                              .contains(request.id) &&
+                                          !_canSelectSourceRequest(request))
                                   ? null
                                   : (selected) => setState(() {
                                         if (selected == true) {
@@ -1397,7 +1523,7 @@ class ActionRecordCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  MonoLabel(_formatTimestamp(log.timestamp), size: 9),
+                  MonoLabel(formatLocalTimestamp(log.timestamp), size: 9),
                 ],
               ),
               Column(

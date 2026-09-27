@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import 'credentialed_http_client.dart';
@@ -72,6 +73,7 @@ class ApiClient {
 
   final http.Client _httpClient;
   final Map<String, String> _pendingIdempotencyKeys = {};
+  final Map<String, String> _pendingUploadIdempotencyKeys = {};
   static const _requestTimeout = Duration(seconds: 30);
   String? accessToken;
   Future<bool> Function()? refreshAccessToken;
@@ -201,7 +203,12 @@ class ApiClient {
       throw const ApiException('Files must be 10 MB or smaller.', 0);
     }
     final contentType = _contentType(fileName, bytes);
-    final idempotencyKey = _uuid.v4();
+    final uploadSignature =
+        '$purpose|$fileName|${sha256.convert(bytes).toString()}';
+    final idempotencyKey = _pendingUploadIdempotencyKeys.putIfAbsent(
+      uploadSignature,
+      _uuid.v4,
+    );
     Future<http.Response> send() async {
       final request = http.MultipartRequest('POST', _uri('/files'));
       request.headers.addAll(_headers(idempotencyKey: idempotencyKey));
@@ -217,11 +224,19 @@ class ApiClient {
       return http.Response.fromStream(await _httpClient.send(request));
     }
 
-    final data = await _withRefresh(send, _decodeData);
-    if (data is! Map<String, dynamic> || data['id'] is! String) {
-      throw const ApiException('The file upload response is invalid.', 0);
+    try {
+      final data = await _withRefresh(send, _decodeData);
+      if (data is! Map<String, dynamic> || data['id'] is! String) {
+        throw const ApiException('The file upload response is invalid.', 0);
+      }
+      _pendingUploadIdempotencyKeys.remove(uploadSignature);
+      return data['id'] as String;
+    } on ApiException catch (error) {
+      if (error.statusCode != 0 || !error.retryable) {
+        _pendingUploadIdempotencyKeys.remove(uploadSignature);
+      }
+      rethrow;
     }
-    return data['id'] as String;
   }
 
   Future<Uint8List> downloadFile(String fileId) async {

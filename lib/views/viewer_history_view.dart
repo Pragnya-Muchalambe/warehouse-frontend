@@ -4,32 +4,13 @@ import 'package:flutter/material.dart';
 
 import '../models/viewer_request.dart';
 import '../models/transaction_log.dart';
+import '../presentation.dart';
 import '../services/auth_service.dart';
 import '../services/api_client.dart';
 import '../services/request_service.dart';
 import '../theme.dart';
 import '../widgets/brutal.dart';
 import '../widgets/attachment_preview.dart';
-
-const List<String> _months = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-String _formatDate(DateTime date) {
-  final local = date.toLocal();
-  return '${local.day} ${_months[local.month - 1]} ${local.year}';
-}
 
 class ViewerHistoryView extends StatefulWidget {
   final AuthSession session;
@@ -79,6 +60,9 @@ class _ViewerHistoryViewState extends State<ViewerHistoryView> {
           widget.session.id,
           widget.section ?? 'Depot',
           mine,
+          storageViewerId: widget.session.accountId.trim().isNotEmpty
+              ? widget.session.accountId
+              : widget.session.id,
         );
         widget.onLoaded?.call();
       }
@@ -261,7 +245,7 @@ class _RequestHistoryCardState extends State<_RequestHistoryCard> {
                 weight: FontWeight.w700,
                 color: kInk,
               ),
-              MonoLabel(_formatDate(request.createdAt), size: 9),
+              MonoLabel(formatLocalDate(request.createdAt), size: 9),
             ],
           ),
         ],

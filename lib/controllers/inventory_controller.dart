@@ -51,6 +51,9 @@ class InventoryController extends ChangeNotifier {
   Future<Uint8List> downloadFile(String fileId) =>
       _service.downloadFile(fileId);
 
+  Future<TransactionLog> loadTransaction(String id) =>
+      _service.getTransaction(id);
+
   void setSection(InventorySection section, {bool notify = true}) {
     if (_activeSection == section) return;
     _activeSection = section;
@@ -122,8 +125,11 @@ class InventoryController extends ChangeNotifier {
     String? dateLeaving,
     String? truckNumber,
     Uint8List? billBytes,
+    String? billFileId,
+    void Function(String fileId)? onBillUploaded,
     Uint8List? proofBytes,
     List<TransactionAttachment> proofs = const [],
+    void Function(int index, TransactionAttachment attachment)? onProofUploaded,
     String? factoryId,
     List<String> sourceRequestIds = const [],
   }) async {
@@ -146,9 +152,12 @@ class InventoryController extends ChangeNotifier {
       items: items,
       billBytes: billBytes,
       billName: bill,
+      billFileId: billFileId,
+      onBillUploaded: onBillUploaded,
       proofBytes: proofBytes,
       proofName: proof,
       proofs: proofs,
+      onProofUploaded: onProofUploaded,
       notes: notes,
       person: person ?? '',
       comingFrom: isIncoming ? comingFrom : null,

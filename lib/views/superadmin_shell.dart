@@ -213,6 +213,7 @@ class _SuperadminShellState extends State<SuperadminShell> {
           editTransaction: controller.editTransaction,
           fixedSection: InventorySection.depot,
           downloadFile: controller.downloadFile,
+          loadTransaction: controller.loadTransaction,
         );
       case _SuperadminPage.requests:
         return SuperadminRequestsView(
@@ -249,6 +250,7 @@ class _SuperadminShellState extends State<SuperadminShell> {
           editTransaction: controller.editTransaction,
           fixedSection: InventorySection.sleeper,
           downloadFile: controller.downloadFile,
+          loadTransaction: controller.loadTransaction,
         );
       case _SuperadminPage.sleeperRequests:
         return SuperadminRequestsView(
@@ -367,6 +369,18 @@ class _SuperadminShellState extends State<SuperadminShell> {
 
   Widget _buildDrawer() {
     final session = widget.session;
+    final profileName = session.name.trim().isNotEmpty
+        ? displayName(session.name)
+        : session.username.trim().isNotEmpty
+            ? session.username.trim()
+            : 'Not available';
+    final accountId = session.accountId.trim().isNotEmpty
+        ? session.accountId.trim()
+        : session.username.trim().isNotEmpty
+            ? session.username.trim()
+            : session.name.trim().isNotEmpty
+                ? displayName(session.name)
+                : 'Not available';
     return Drawer(
       backgroundColor: kSurface,
       width: 280,
@@ -396,9 +410,7 @@ class _SuperadminShellState extends State<SuperadminShell> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        session.name.isNotEmpty
-                            ? displayName(session.name)
-                            : session.username.toUpperCase(),
+                        profileName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -409,7 +421,7 @@ class _SuperadminShellState extends State<SuperadminShell> {
                       ),
                       const SizedBox(height: 2),
                       MonoLabel(
-                        'ID: ${session.id.isNotEmpty ? session.id : session.username.toUpperCase()}',
+                        'ID: $accountId',
                         size: 9,
                       ),
                       const SizedBox(height: 2),

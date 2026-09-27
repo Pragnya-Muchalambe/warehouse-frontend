@@ -326,6 +326,7 @@ void main() {
     expect(find.text('Select Factory'), findsOneWidget);
     await tester.tap(find.byType(DropdownButtonFormField<WarehouseFactory>));
     await tester.pumpAndSettle();
+    expect(find.textContaining('uuid-factory-'), findsNothing);
     await tester.tap(find.textContaining('Bengaluru Sleeper Plant').last);
     await tester.pumpAndSettle();
     expect(find.textContaining('SELECTED FACTORY: BENGALURU SLEEPER PLANT'),

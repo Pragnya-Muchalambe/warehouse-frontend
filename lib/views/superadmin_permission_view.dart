@@ -2,34 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../models/account_request.dart';
 import '../models/user_account.dart';
+import '../presentation.dart';
 import '../services/account_request_service.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/user_account_service.dart';
 import '../theme.dart';
 import '../widgets/brutal.dart';
-
-const List<String> _months = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-String _formatTimestamp(DateTime dt) {
-  final d = dt.toLocal();
-  final hh = d.hour.toString().padLeft(2, '0');
-  final mm = d.minute.toString().padLeft(2, '0');
-  return '${d.day} ${_months[d.month - 1]} ${d.year}, $hh:$mm';
-}
 
 /// Superadmin-only section for NEW USER account requests. Accepting creates a
 /// real login account through the existing authentication architecture;
@@ -468,13 +447,13 @@ class _AccountRequestCard extends StatelessWidget {
           _DetailRow(label: 'ROLE', value: request.role.toUpperCase()),
           _DetailRow(
             label: 'REQUESTED',
-            value: _formatTimestamp(request.submittedAt),
+            value: formatLocalTimestamp(request.submittedAt),
           ),
           if (!pending && request.decisionAt != null) ...[
             const SizedBox(height: 6),
             _DetailRow(
               label: 'DECIDED',
-              value: _formatTimestamp(request.decisionAt!),
+              value: formatLocalTimestamp(request.decisionAt!),
             ),
           ],
           if (pending) ...[

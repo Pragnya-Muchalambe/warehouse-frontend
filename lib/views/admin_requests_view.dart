@@ -10,28 +10,6 @@ import '../theme.dart';
 import '../widgets/brutal.dart';
 import '../widgets/reject_request_dialog.dart';
 
-const List<String> _months = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-String _formatTimestamp(DateTime dt) {
-  final d = dt.toLocal();
-  final hh = d.hour.toString().padLeft(2, '0');
-  final mm = d.minute.toString().padLeft(2, '0');
-  return '${d.day} ${_months[d.month - 1]} ${d.year}, $hh:$mm';
-}
-
 /// Admin processing page for Viewer requests. Accepting a request raises BI
 /// Issued on the matched depot item (Total unchanged); rejecting only records
 /// the decision. Both decisions are persisted and appear in the audit trail.
@@ -257,39 +235,37 @@ class _RequestCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Request ID: ${_shortId(request.id)}',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
-                  color: kInk,
-                ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _statusColor,
+                border: Border.all(color: _statusColor),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: _statusColor,
-                  border: Border.all(color: _statusColor),
-                ),
-                child: MonoLabel(
-                  request.decisionLabel.toUpperCase(),
-                  size: 9,
-                  weight: FontWeight.w700,
-                  color: kSurface,
-                ),
+              child: MonoLabel(
+                request.decisionLabel.toUpperCase(),
+                size: 9,
+                weight: FontWeight.w700,
+                color: kSurface,
               ),
-            ],
+            ),
           ),
           const SizedBox(height: 6),
-          MonoLabel(_formatTimestamp(request.createdAt), size: 9),
+          MonoLabel(formatLocalTimestamp(request.createdAt), size: 9),
           const SizedBox(height: 12),
           _RequestDetailRow(
-              label: 'Viewer', value: displayName(request.viewerName)),
-          _RequestDetailRow(label: 'Viewer ID', value: request.viewerId),
+            label: 'Viewer',
+            value: request.viewerName.trim().isEmpty
+                ? 'Not available'
+                : displayName(request.viewerName),
+          ),
+          _RequestDetailRow(
+            label: 'Viewer ID',
+            value: request.viewerAccountId.trim().isEmpty
+                ? 'Not available'
+                : request.viewerAccountId,
+          ),
           _RequestDetailRow(label: 'Material', value: request.itemName),
           _RequestDetailRow(label: 'PL Number', value: request.materialNumber),
           _RequestDetailRow(
@@ -365,9 +341,4 @@ class _RequestDetailRow extends StatelessWidget {
       ),
     );
   }
-}
-
-String _shortId(String id) {
-  if (id.length <= 6) return id;
-  return id.substring(id.length - 6);
 }

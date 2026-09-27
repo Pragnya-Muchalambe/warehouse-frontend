@@ -40,31 +40,71 @@ class ViewerShell extends StatefulWidget {
   State<ViewerShell> createState() => _ViewerShellState();
 }
 
-class _ViewerShellState extends State<ViewerShell> {
+class _ViewerShellState extends State<ViewerShell> with WidgetsBindingObserver {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   _ViewerPage _page = _ViewerPage.depot;
   int _depotHistoryBadge = 0;
   int _sleeperHistoryBadge = 0;
   String? _sleeperHistoryFactoryId;
+  int _requestRefreshEpoch = 0;
+  int _badgeRefreshEpoch = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _refreshHistoryBadges();
   }
 
   Future<void> _refreshHistoryBadges() async {
     final service = widget.requestService;
     if (service == null) return;
-    final counts = await Future.wait([
-      service.unseenDecisionCount(widget.session.id, 'Depot'),
-      service.unseenDecisionCount(widget.session.id, 'Sleeper'),
-    ]);
-    if (!mounted) return;
-    setState(() {
-      _depotHistoryBadge = counts[0];
-      _sleeperHistoryBadge = counts[1];
-    });
+    final epoch = ++_badgeRefreshEpoch;
+    try {
+      final requests = await service.loadRequests();
+      final storageViewerId = widget.session.accountId.trim().isNotEmpty
+          ? widget.session.accountId
+          : widget.session.id;
+      final counts = await Future.wait([
+        service.unseenDecisionCount(
+          widget.session.id,
+          'Depot',
+          storageViewerId: storageViewerId,
+          requests: requests,
+        ),
+        service.unseenDecisionCount(
+          widget.session.id,
+          'Sleeper',
+          storageViewerId: storageViewerId,
+          requests: requests,
+        ),
+      ]);
+      if (!mounted || epoch != _badgeRefreshEpoch) return;
+      setState(() {
+        _depotHistoryBadge = counts[0];
+        _sleeperHistoryBadge = counts[1];
+      });
+    } catch (_) {
+      // Keep the last known badge state when a background refresh fails.
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (_page == _ViewerPage.requests ||
+        _page == _ViewerPage.history ||
+        _page == _ViewerPage.sleeperRequests ||
+        _page == _ViewerPage.sleeperHistory) {
+      setState(() => _requestRefreshEpoch++);
+    }
+    _refreshHistoryBadges();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   String get _pageLabel {
@@ -112,6 +152,7 @@ class _ViewerShellState extends State<ViewerShell> {
         );
       case _ViewerPage.requests:
         return ViewerRequestsView(
+          key: ValueKey('viewer-depot-requests-$_requestRefreshEpoch'),
           controller: controller,
           session: widget.session,
           requestService: widget.requestService,
@@ -120,6 +161,7 @@ class _ViewerShellState extends State<ViewerShell> {
         );
       case _ViewerPage.history:
         return ViewerHistoryView(
+          key: ValueKey('viewer-depot-history-$_requestRefreshEpoch'),
           session: widget.session,
           section: 'Depot',
           requestService: widget.requestService,
@@ -127,6 +169,7 @@ class _ViewerShellState extends State<ViewerShell> {
         );
       case _ViewerPage.sleeperRequests:
         return ViewerRequestsView(
+          key: ValueKey('viewer-sleeper-requests-$_requestRefreshEpoch'),
           controller: controller,
           session: widget.session,
           section: 'Sleeper',
@@ -138,6 +181,7 @@ class _ViewerShellState extends State<ViewerShell> {
         );
       case _ViewerPage.sleeperHistory:
         return ViewerHistoryView(
+          key: ValueKey('viewer-sleeper-history-$_requestRefreshEpoch'),
           session: widget.session,
           section: 'Sleeper',
           factoryId: _sleeperHistoryFactoryId,
@@ -218,6 +262,18 @@ class _ViewerShellState extends State<ViewerShell> {
 
   Widget _buildDrawer() {
     final session = widget.session;
+    final profileName = session.name.trim().isNotEmpty
+        ? displayName(session.name)
+        : session.username.trim().isNotEmpty
+            ? session.username.trim()
+            : 'Not available';
+    final accountId = session.accountId.trim().isNotEmpty
+        ? session.accountId.trim()
+        : session.username.trim().isNotEmpty
+            ? session.username.trim()
+            : session.name.trim().isNotEmpty
+                ? displayName(session.name)
+                : 'Not available';
     return Drawer(
       backgroundColor: kSurface,
       width: 280,
@@ -248,9 +304,7 @@ class _ViewerShellState extends State<ViewerShell> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        session.name.isNotEmpty
-                            ? displayName(session.name)
-                            : session.username.toUpperCase(),
+                        profileName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -261,7 +315,7 @@ class _ViewerShellState extends State<ViewerShell> {
                       ),
                       const SizedBox(height: 2),
                       MonoLabel(
-                        'ID: ${session.id.isNotEmpty ? session.id : session.username.toUpperCase()}',
+                        'ID: $accountId',
                         size: 9,
                       ),
                       const SizedBox(height: 2),
@@ -354,19 +408,35 @@ class _ViewerShellState extends State<ViewerShell> {
                 isActive: sleeper
                     ? _page == _ViewerPage.sleeperRequests
                     : _page == _ViewerPage.requests,
-                onTap: () => setState(() => _page = sleeper
-                    ? _ViewerPage.sleeperRequests
-                    : _ViewerPage.requests),
+                onTap: () {
+                  setState(() {
+                    _requestRefreshEpoch++;
+                    _page = sleeper
+                        ? _ViewerPage.sleeperRequests
+                        : _ViewerPage.requests;
+                  });
+                  _refreshHistoryBadges();
+                },
               ),
               _ViewerNavItem(
                 label: 'HISTORY',
                 icon: Icons.history,
                 badgeCount: sleeper ? _sleeperHistoryBadge : _depotHistoryBadge,
+                badgeKey: ValueKey(sleeper
+                    ? 'viewer-sleeper-history-badge'
+                    : 'viewer-depot-history-badge'),
                 isActive: sleeper
                     ? _page == _ViewerPage.sleeperHistory
                     : _page == _ViewerPage.history,
-                onTap: () => setState(() => _page =
-                    sleeper ? _ViewerPage.sleeperHistory : _ViewerPage.history),
+                onTap: () {
+                  setState(() {
+                    _requestRefreshEpoch++;
+                    _page = sleeper
+                        ? _ViewerPage.sleeperHistory
+                        : _ViewerPage.history;
+                  });
+                  _refreshHistoryBadges();
+                },
               ),
             ],
           ),
@@ -428,6 +498,7 @@ class _ViewerNavItem extends StatelessWidget {
   final bool isActive;
   final VoidCallback onTap;
   final int badgeCount;
+  final Key? badgeKey;
 
   const _ViewerNavItem({
     required this.label,
@@ -436,6 +507,7 @@ class _ViewerNavItem extends StatelessWidget {
     required this.isActive,
     required this.onTap,
     this.badgeCount = 0,
+    this.badgeKey,
   });
 
   @override
@@ -467,6 +539,7 @@ class _ViewerNavItem extends StatelessWidget {
                       right: -12,
                       top: -9,
                       child: Container(
+                        key: badgeKey,
                         constraints:
                             const BoxConstraints(minWidth: 16, minHeight: 16),
                         padding: const EdgeInsets.symmetric(horizontal: 3),

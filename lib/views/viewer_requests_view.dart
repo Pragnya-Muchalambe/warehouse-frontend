@@ -289,7 +289,7 @@ class _ViewerRequestsViewState extends State<ViewerRequestsView> {
                   items: widget.controller.factories
                       .map((factory) => DropdownMenuItem(
                             value: factory,
-                            child: Text('${factory.name} (${factory.id})'),
+                            child: Text(factory.name),
                           ))
                       .toList(),
                   onChanged: _cart.isNotEmpty || _submitting

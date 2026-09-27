@@ -40,7 +40,11 @@ void main() {
           PickedTransactionFile(
               'proof.pdf', Uint8List.fromList('%PDF-1.4'.codeUnits)),
           PickedTransactionFile(
-              'photo.png', Uint8List.fromList([0x89, 0x50, 0x4e, 0x47])),
+            'photo.png',
+            Uint8List.fromList(
+              [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+            ),
+          ),
         ];
       }
       return null;
@@ -117,6 +121,150 @@ void main() {
     expect(find.text('PROOFS (0)'), findsOneWidget);
     expect(find.text('NO PROOF ATTACHED'), findsOneWidget);
   });
+
+  testWidgets('accepts valid signatures despite generic or absent picker MIME',
+      (tester) async {
+    var invocation = 0;
+    final picker = _Picker(() {
+      invocation++;
+      return switch (invocation) {
+        1 => [
+            PickedTransactionFile(
+              'generic.pdf',
+              Uint8List.fromList('%PDF-1.7'.codeUnits),
+              contentType: 'application/octet-stream',
+            ),
+          ],
+        2 => [
+            PickedTransactionFile(
+              'no-mime.pdf',
+              Uint8List.fromList('%PDF-1.7'.codeUnits),
+            ),
+          ],
+        3 => [
+            PickedTransactionFile(
+              'photo.jpg',
+              Uint8List.fromList([0xff, 0xd8, 0xff, 0x00]),
+              contentType: 'application/octet-stream',
+            ),
+            PickedTransactionFile(
+              'image.png',
+              Uint8List.fromList(
+                [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+              ),
+            ),
+            PickedTransactionFile(
+              'image.webp',
+              Uint8List.fromList(
+                [
+                  0x52,
+                  0x49,
+                  0x46,
+                  0x46,
+                  0x00,
+                  0x00,
+                  0x00,
+                  0x00,
+                  0x57,
+                  0x45,
+                  0x42,
+                  0x50,
+                ],
+              ),
+              contentType: 'binary/octet-stream',
+            ),
+          ],
+        _ => null,
+      };
+    });
+    await _pumpTransactions(tester, picker);
+
+    await tester.tap(find.text('UPLOAD BILL'));
+    await tester.pump();
+    expect(find.text('generic.pdf'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Replace Bill'));
+    await tester.pump();
+    expect(find.text('no-mime.pdf'), findsOneWidget);
+
+    await tester.tap(find.text('ADD PROOF'));
+    await tester.pump();
+    expect(find.text('photo.jpg'), findsOneWidget);
+    expect(find.text('image.png'), findsOneWidget);
+    expect(find.text('image.webp'), findsOneWidget);
+  });
+
+  testWidgets('rejects invalid content and extension-signature mismatches',
+      (tester) async {
+    var invocation = 0;
+    final picker = _Picker(() {
+      invocation++;
+      return [
+        if (invocation == 1)
+          PickedTransactionFile(
+            'invalid.pdf',
+            Uint8List.fromList('not a document'.codeUnits),
+          )
+        else
+          PickedTransactionFile(
+            'mismatch.pdf',
+            Uint8List.fromList(
+              [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+            ),
+            contentType: 'application/pdf',
+          ),
+      ];
+    });
+    await _pumpTransactions(tester, picker);
+
+    await tester.tap(find.text('UPLOAD BILL'));
+    await tester.pump();
+    expect(find.text('invalid.pdf'), findsNothing);
+    expect(
+      find.textContaining(
+          'does not match its PDF, JPEG, PNG, or WebP extension'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('UPLOAD BILL'));
+    await tester.pump();
+    expect(find.text('mismatch.pdf'), findsNothing);
+    expect(
+      find.textContaining(
+          'does not match its PDF, JPEG, PNG, or WebP extension'),
+      findsWidgets,
+    );
+  });
+}
+
+Future<void> _pumpTransactions(
+  WidgetTester tester,
+  TransactionFilePicker picker,
+) async {
+  final controller = InventoryController(
+    inventoryService: FakeInventoryService(),
+  );
+  addTearDown(controller.dispose);
+  await controller.init(role: 'admin');
+  await tester.pumpWidget(MaterialApp(
+    theme: buildTheme(),
+    home: Scaffold(
+      body: TransactionsView(
+        controller: controller,
+        addTransaction: controller.addTransaction,
+        session: const AuthSession(
+          username: 'admin',
+          role: 'admin',
+          name: 'Admin',
+          id: 'admin-id',
+        ),
+        fixedSection: InventorySection.depot,
+        filePicker: picker,
+      ),
+    ),
+  ));
+  await tester.tap(find.text('New Incoming'));
+  await tester.pumpAndSettle();
 }
 
 class _Picker implements TransactionFilePicker {

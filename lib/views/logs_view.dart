@@ -27,6 +27,7 @@ class LogsView extends StatefulWidget {
   }) editTransaction;
   final InventorySection? fixedSection;
   final Future<Uint8List> Function(String fileId)? downloadFile;
+  final Future<TransactionLog> Function(String transactionId)? loadTransaction;
 
   const LogsView({
     super.key,
@@ -37,6 +38,7 @@ class LogsView extends StatefulWidget {
     required this.editTransaction,
     this.fixedSection,
     this.downloadFile,
+    this.loadTransaction,
   });
 
   @override
@@ -48,6 +50,8 @@ class _LogsViewState extends State<LogsView> {
   String? _editingTransactionId;
   List<CartItem> _editItems = [];
   final Map<String, TextEditingController> _editControllers = {};
+  final Map<String, TransactionLog> _resolvedTransactions = {};
+  final Set<String> _loadingTransactions = {};
 
   bool get _isSuperadmin => widget.session.role == 'superadmin';
 
@@ -55,24 +59,63 @@ class _LogsViewState extends State<LogsView> {
   void initState() {
     super.initState();
     _section = widget.fixedSection ?? InventorySection.depot;
+    _resolveMissingTransactions();
   }
 
-  List<AuditLog> get _filteredLogs => widget.logs.where((log) {
-        if (_section == null) return true;
-        final transaction = _transactionFor(log);
-        final expectedScope =
-            _section == InventorySection.depot ? 'DEPOT' : 'FACTORY';
-        final transactionScope = transaction?.section == InventorySection.depot
-            ? 'DEPOT'
-            : transaction?.section == InventorySection.sleeper
-                ? 'FACTORY'
-                : null;
-        if ((log.scope ?? transactionScope) != expectedScope) return false;
-        return true;
-      }).toList();
+  @override
+  void didUpdateWidget(covariant LogsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(widget.logs, oldWidget.logs) ||
+        !identical(widget.transactions, oldWidget.transactions) ||
+        (oldWidget.loadTransaction == null && widget.loadTransaction != null)) {
+      _resolveMissingTransactions();
+    }
+  }
+
+  Future<void> _resolveMissingTransactions() async {
+    final loader = widget.loadTransaction;
+    if (loader == null) return;
+    for (final log in widget.logs.where(
+      (log) => log.entityType == 'TRANSACTION' && _transactionFor(log) == null,
+    )) {
+      if (!_loadingTransactions.add(log.entityId)) continue;
+      try {
+        final transaction = await loader(log.entityId);
+        if (mounted) {
+          setState(() => _resolvedTransactions[log.entityId] = transaction);
+        }
+      } on ApiException {
+        // Concealed or removed transactions remain unavailable in the audit UI.
+      } finally {
+        _loadingTransactions.remove(log.entityId);
+      }
+    }
+  }
+
+  List<AuditLog> get _filteredLogs {
+    final logs = widget.logs.where((log) {
+      if (_section == null) return true;
+      final transaction = _transactionFor(log);
+      final expectedScope =
+          _section == InventorySection.depot ? 'DEPOT' : 'FACTORY';
+      final transactionScope = transaction?.section == InventorySection.depot
+          ? 'DEPOT'
+          : transaction?.section == InventorySection.sleeper
+              ? 'FACTORY'
+              : null;
+      return (log.scope ?? transactionScope) == expectedScope;
+    }).toList();
+    logs.sort((a, b) {
+      final byTime = b.occurredAt.compareTo(a.occurredAt);
+      return byTime != 0 ? byTime : a.id.compareTo(b.id);
+    });
+    return logs;
+  }
 
   TransactionLog? _transactionFor(AuditLog log) {
     if (log.entityType != 'TRANSACTION') return null;
+    final resolved = _resolvedTransactions[log.entityId];
+    if (resolved != null) return resolved;
     return widget.transactions
         .where((transaction) => transaction.id == log.entityId)
         .firstOrNull;
@@ -247,6 +290,8 @@ class _LogsViewState extends State<LogsView> {
                             ? null
                             : () => _saveEdit(transaction.id),
                         downloadFile: widget.downloadFile,
+                        metadataLoading:
+                            _loadingTransactions.contains(log.entityId),
                       );
                     },
                   ),
@@ -268,6 +313,7 @@ class _AuditCard extends StatelessWidget {
   final void Function(String id, String value) onUpdateQuantity;
   final VoidCallback? onSaveEdit;
   final Future<Uint8List> Function(String fileId)? downloadFile;
+  final bool metadataLoading;
 
   const _AuditCard({
     required this.log,
@@ -280,6 +326,7 @@ class _AuditCard extends StatelessWidget {
     required this.onUpdateQuantity,
     required this.onSaveEdit,
     this.downloadFile,
+    this.metadataLoading = false,
   });
 
   Color get _eventColor {
@@ -331,7 +378,7 @@ class _AuditCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     MonoLabel(
-                      '${MaterialLocalizations.of(context).formatMediumDate(log.occurredAt.toLocal())}, ${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(log.occurredAt.toLocal()))}',
+                      formatLocalTimestamp(log.occurredAt),
                       size: 9,
                     ),
                   ],
@@ -381,45 +428,88 @@ class _AuditCard extends StatelessWidget {
                 onChanged: (value) => onUpdateQuantity(item.id, value),
               ),
           ],
-          const SizedBox(height: 12),
-          const MonoLabel('BILL', weight: FontWeight.w700),
-          if (transaction?.bill != null)
-            _AuditInlineAttachment(
-              label: 'View Bill',
-              fileName: transaction!.bill!,
-              bytes: transaction!.billData == null
-                  ? null
-                  : base64Decode(transaction!.billData!),
-            )
-          else if (log.billFile != null)
+          if (_showsTransactionAttachments) ...[
+            const SizedBox(height: 12),
+            const MonoLabel('BILL', weight: FontWeight.w700),
+            if (transaction?.bill != null &&
+                (transaction!.billData != null ||
+                    transaction!.billFileId != null))
+              _Attachment(
+                label: 'View Bill',
+                file: AuditFileMetadata(
+                  id: transaction!.billFileId ?? '',
+                  purpose: 'BILL',
+                  fileName: transaction!.bill!,
+                  contentType: null,
+                ),
+                inlineBytes: transaction!.billData == null
+                    ? null
+                    : base64Decode(transaction!.billData!),
+                downloadFile: downloadFile,
+              )
+            else if (log.billFile != null)
+              _Attachment(
+                label: 'View Bill',
+                file: log.billFile!,
+                downloadFile: downloadFile,
+              )
+            else
+              MonoLabel(
+                metadataLoading
+                    ? 'Bill: Loading metadata...'
+                    : 'Bill: Not available',
+                color: kGray400,
+              ),
+            const SizedBox(height: 12),
+            MonoLabel(
+              'PROOFS (${transaction?.proofs.length ?? (log.proofFiles.isNotEmpty ? log.proofFiles.length : (log.proofFile == null ? 0 : 1))})',
+              weight: FontWeight.w700,
+            ),
+            if (transaction != null && transaction!.proofs.isNotEmpty)
+              for (final indexed in transaction!.proofs.indexed)
+                _Attachment(
+                  label: 'View Proof ${indexed.$1 + 1}',
+                  file: AuditFileMetadata(
+                    id: indexed.$2.fileId ??
+                        (indexed.$1 < transaction!.proofFileIds.length
+                            ? transaction!.proofFileIds[indexed.$1]
+                            : ''),
+                    purpose: 'PROOF',
+                    fileName: indexed.$2.fileName,
+                    contentType: indexed.$2.contentType,
+                  ),
+                  inlineBytes: indexed.$2.bytes,
+                  downloadFile: downloadFile,
+                )
+            else if (log.proofFiles.isNotEmpty)
+              for (final indexed in log.proofFiles.indexed)
+                _Attachment(
+                  label: 'View Proof ${indexed.$1 + 1}',
+                  file: indexed.$2,
+                  downloadFile: downloadFile,
+                )
+            else if (log.proofFile != null)
+              _Attachment(
+                label: 'View Proof',
+                file: log.proofFile!,
+                downloadFile: downloadFile,
+              )
+            else
+              MonoLabel(
+                metadataLoading
+                    ? 'Proofs: Loading metadata...'
+                    : 'No proof attached',
+                color: kGray400,
+              ),
+          ] else if (_showsRequestBill) ...[
+            const SizedBox(height: 12),
+            const MonoLabel('BILL', weight: FontWeight.w700),
             _Attachment(
               label: 'View Bill',
               file: log.billFile!,
               downloadFile: downloadFile,
-            )
-          else
-            const MonoLabel('Bill: Not available', color: kGray400),
-          const SizedBox(height: 12),
-          MonoLabel(
-            'PROOFS (${transaction?.proofs.length ?? (log.proofFile == null ? 0 : 1)})',
-            weight: FontWeight.w700,
-          ),
-          if (transaction != null && transaction!.proofs.isNotEmpty)
-            for (final indexed in transaction!.proofs.indexed)
-              _AuditInlineAttachment(
-                label: 'View Proof ${indexed.$1 + 1}',
-                fileName: indexed.$2.fileName,
-                bytes: indexed.$2.bytes,
-                contentType: indexed.$2.contentType,
-              )
-          else if (log.proofFile != null)
-            _Attachment(
-              label: 'View Proof',
-              file: log.proofFile!,
-              downloadFile: downloadFile,
-            )
-          else
-            const MonoLabel('No proof attached', color: kGray400),
+            ),
+          ],
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -453,11 +543,19 @@ class _AuditCard extends StatelessWidget {
         _text('materialNameSnapshot') ??
         _text('viewerName') ??
         _text('requestedId');
-    final id = _text('id') ?? _text('itemId') ?? _text('materialId');
+    final id = _text('itemId') ?? _text('materialId');
     if (name != null && id != null) return '$name ($id)';
     if (name != null) return name;
     return log.entityType.replaceAll('_', ' ');
   }
+
+  bool get _showsTransactionAttachments =>
+      log.entityType == 'TRANSACTION' &&
+      const {'TRANSACTION_CREATED', 'TRANSACTION_CORRECTED'}
+          .contains(log.eventType);
+
+  bool get _showsRequestBill =>
+      log.entityType == 'REQUEST' && log.billFile != null;
 
   List<String> get _summaryLines {
     final lines = <String>[];
@@ -522,7 +620,12 @@ class _AuditCard extends StatelessWidget {
       ];
       lines.add(files.join(' · '));
     }
-    return lines;
+    final seen = <String>{};
+    return lines.where((line) {
+      final normalized =
+          line.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+      return seen.add(normalized);
+    }).toList();
   }
 
   void _addStockChanges(
@@ -683,72 +786,67 @@ class _ReasonBox extends StatelessWidget {
       );
 }
 
-class _AuditInlineAttachment extends StatelessWidget {
-  final String label;
-  final String fileName;
-  final Uint8List? bytes;
-  final String? contentType;
-
-  const _AuditInlineAttachment({
-    required this.label,
-    required this.fileName,
-    required this.bytes,
-    this.contentType,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return TextButton.icon(
-      onPressed: bytes == null
-          ? null
-          : () => showAttachmentPreview(
-                context,
-                fileName: fileName,
-                bytes: bytes!,
-                contentType: contentType,
-              ),
-      icon: const Icon(Icons.visibility_outlined),
-      label: Text('$label: $fileName'),
-    );
-  }
-}
-
-class _Attachment extends StatelessWidget {
+class _Attachment extends StatefulWidget {
   final String label;
   final AuditFileMetadata file;
   final Future<Uint8List> Function(String fileId)? downloadFile;
+  final Uint8List? inlineBytes;
 
   const _Attachment({
     required this.label,
     required this.file,
     this.downloadFile,
+    this.inlineBytes,
   });
+
+  @override
+  State<_Attachment> createState() => _AttachmentState();
+}
+
+class _AttachmentState extends State<_Attachment> {
+  bool _loading = false;
 
   Future<void> _open(BuildContext context) async {
     try {
-      final loader = downloadFile;
-      if (loader == null) return;
-      final bytes = await loader(file.id);
+      var bytes = widget.inlineBytes;
+      if (bytes == null) {
+        final loader = widget.downloadFile;
+        if (loader == null || widget.file.id.isEmpty) return;
+        setState(() => _loading = true);
+        bytes = await loader(widget.file.id);
+      }
       if (!context.mounted) return;
       await showAttachmentPreview(
         context,
-        fileName: file.fileName,
+        fileName: widget.file.fileName,
         bytes: bytes,
-        contentType: file.contentType,
+        contentType: widget.file.contentType,
       );
     } on ApiException catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message)),
+          SnackBar(
+              content: Text(switch (error.statusCode) {
+            401 => 'Your session expired. Sign in and try again.',
+            403 => 'You are not authorized to view this attachment.',
+            404 => 'This attachment is no longer available.',
+            _ => 'Unable to load this attachment. Please try again.',
+          })),
         );
       }
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: () => _open(context),
+      onTap: _loading ||
+              (widget.inlineBytes == null &&
+                  (widget.downloadFile == null || widget.file.id.isEmpty))
+          ? null
+          : () => _open(context),
       child: Container(
         constraints: const BoxConstraints(maxWidth: 240),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -759,11 +857,15 @@ class _Attachment extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.visibility_outlined, size: 12, color: kInkMuted),
+            Icon(
+              _loading ? Icons.hourglass_top : Icons.visibility_outlined,
+              size: 12,
+              color: kInkMuted,
+            ),
             const SizedBox(width: 4),
             Flexible(
               child: Text(
-                '$label: ${file.fileName}',
+                '${_loading ? 'Loading' : widget.label}: ${widget.file.fileName}',
                 overflow: TextOverflow.ellipsis,
                 style: monoStyle(size: 9),
               ),

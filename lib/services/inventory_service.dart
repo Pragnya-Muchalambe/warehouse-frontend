@@ -134,6 +134,9 @@ class InventoryService {
     required List<CartItem> items,
     required Uint8List billBytes,
     required String billName,
+    String? billFileId,
+    void Function(String fileId)? onBillUploaded,
+    void Function(int index, TransactionAttachment attachment)? onProofUploaded,
     Uint8List? proofBytes,
     String? proofName,
     List<TransactionAttachment> proofs = const [],
@@ -169,11 +172,13 @@ class InventoryService {
       dateLeaving: dateLeaving,
       truckNumber: truckNumber,
     );
-    final billFileId = await _api.uploadFile(
-      purpose: 'BILL',
-      fileName: billName,
-      bytes: billBytes,
-    );
+    final resolvedBillFileId = billFileId ??
+        await _api.uploadFile(
+          purpose: 'BILL',
+          fileName: billName,
+          bytes: billBytes,
+        );
+    if (billFileId == null) onBillUploaded?.call(resolvedBillFileId);
     final proofFileId = proofBytes == null || proofName == null
         ? null
         : await _api.uploadFile(
@@ -184,8 +189,11 @@ class InventoryService {
     final proofFileIds = await _resolveProofFileIds([
       if (proofFileId != null) proofFileId,
       ...proofs,
-    ]);
-    if (proofFileIds.contains(billFileId)) {
+    ], onUploaded: (index, attachment) {
+      final proofIndex = index - (proofFileId == null ? 0 : 1);
+      if (proofIndex >= 0) onProofUploaded?.call(proofIndex, attachment);
+    });
+    if (proofFileIds.contains(resolvedBillFileId)) {
       throw const ApiException('Bill and proof must be separate files.', 0);
     }
     final body = <String, dynamic>{
@@ -203,7 +211,7 @@ class InventoryService {
       if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
       'person': person.trim(),
       'truckNumber': truckNumber.trim().toUpperCase(),
-      'billFileId': billFileId,
+      'billFileId': resolvedBillFileId,
       'proofFileIds': proofFileIds,
       if (sourceRequestIds.isNotEmpty) 'sourceRequestIds': sourceRequestIds,
       if (type == 'INCOMING') ...{
@@ -269,13 +277,15 @@ class InventoryService {
   }
 
   Future<List<String>> _resolveProofFileIds(
-    List<Object> proofs,
-  ) async {
+    List<Object> proofs, {
+    void Function(int index, TransactionAttachment attachment)? onUploaded,
+  }) async {
     if (proofs.length > 10) {
       throw const ApiException('Transactions support at most 10 proofs.', 0);
     }
     final ids = <String>[];
-    for (final value in proofs) {
+    for (final indexed in proofs.indexed) {
+      final value = indexed.$2;
       if (value is String && value.isNotEmpty) {
         ids.add(value);
         continue;
@@ -294,11 +304,20 @@ class InventoryService {
           0,
         );
       }
-      ids.add(await _api.uploadFile(
+      final fileId = await _api.uploadFile(
         purpose: 'PROOF',
         fileName: value.fileName,
         bytes: bytes,
-      ));
+      );
+      ids.add(fileId);
+      onUploaded?.call(
+        indexed.$1,
+        value.copyWith(
+          fileId: fileId,
+          uploadState: AttachmentUploadState.uploaded,
+          clearUploadError: true,
+        ),
+      );
     }
     if (ids.length != ids.toSet().length) {
       throw const ApiException('Proof files must be unique.', 0);

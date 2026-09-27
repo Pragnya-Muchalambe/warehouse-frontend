@@ -129,12 +129,23 @@ void main() {
       'itemName': 'Material',
       'quantity': 1,
       'createdAt': '2026-09-13T00:00:00.000Z',
+      'module': 'DEPOT',
+      'section': 'Depot',
+      'status': 'ACCEPTED',
+      'decisionAt': '2026-09-13T01:00:00.000Z',
+      'updatedAt': '2026-09-13T01:00:00.000Z',
+      'relatedTransactionId': 'transaction-id',
       'billAttachment': {
         'id': 'bill-id',
         'fileName': 'remote.png',
         'contentType': 'image/png',
+        'sizeBytes': 68,
       },
     });
+    expect(request.section, 'Depot');
+    expect(request.relatedTransactionId, 'transaction-id');
+    expect(request.billAttachment!.fileId, 'bill-id');
+    expect(request.billAttachment!.sizeBytes, 68);
     final service = _RequestService([request]);
     await tester.pumpWidget(MaterialApp(
       theme: buildTheme(),

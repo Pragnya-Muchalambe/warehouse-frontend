@@ -11,33 +11,6 @@ import '../widgets/brutal.dart';
 import '../widgets/reject_request_dialog.dart';
 import '../widgets/undo_request_dialog.dart';
 
-const List<String> _months = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-String _formatTimestamp(DateTime dt) {
-  final d = dt.toLocal();
-  final hh = d.hour.toString().padLeft(2, '0');
-  final mm = d.minute.toString().padLeft(2, '0');
-  return '${d.day} ${_months[d.month - 1]} ${d.year}, $hh:$mm';
-}
-
-String _shortId(String id) {
-  if (id.length <= 6) return id;
-  return id.substring(id.length - 6);
-}
-
 /// Superadmin processing page for Viewer requests. Identical to the Admin
 /// flow, plus the ability to UNDO any processed decision (restoring Pending)
 /// and re-decide. Every override is preserved in the request's decision
@@ -319,38 +292,37 @@ class _SuperadminRequestCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Request ID: ${_shortId(request.id)}',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
-                  color: kInk,
-                ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _statusColor,
+                border: Border.all(color: _statusColor),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: _statusColor,
-                  border: Border.all(color: _statusColor),
-                ),
-                child: MonoLabel(
-                  request.decisionLabel.toUpperCase(),
-                  size: 9,
-                  weight: FontWeight.w700,
-                  color: kSurface,
-                ),
+              child: MonoLabel(
+                request.decisionLabel.toUpperCase(),
+                size: 9,
+                weight: FontWeight.w700,
+                color: kSurface,
               ),
-            ],
+            ),
           ),
           const SizedBox(height: 6),
-          MonoLabel(_formatTimestamp(request.createdAt), size: 9),
+          MonoLabel(formatLocalTimestamp(request.createdAt), size: 9),
           const SizedBox(height: 12),
-          _DetailRow(label: 'Viewer', value: displayName(request.viewerName)),
-          _DetailRow(label: 'Viewer ID', value: request.viewerId),
+          _DetailRow(
+            label: 'Viewer',
+            value: request.viewerName.trim().isEmpty
+                ? 'Not available'
+                : displayName(request.viewerName),
+          ),
+          _DetailRow(
+            label: 'Viewer ID',
+            value: request.viewerAccountId.trim().isEmpty
+                ? 'Not available'
+                : request.viewerAccountId,
+          ),
           _DetailRow(label: 'Material', value: request.itemName),
           _DetailRow(label: 'PL Number', value: request.materialNumber),
           _DetailRow(label: 'Quantity', value: '${request.quantity} pcs'),
@@ -386,7 +358,7 @@ class _SuperadminRequestCard extends StatelessWidget {
             if (request.decisionAt != null) ...[
               const SizedBox(height: 10),
               MonoLabel(
-                'Decided: ${_formatTimestamp(request.decisionAt!)}',
+                'Decided: ${formatLocalTimestamp(request.decisionAt!)}',
                 size: 9,
                 color: kGray400,
               ),
@@ -424,7 +396,7 @@ class _SuperadminRequestCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '${entry.label} — ${_formatTimestamp(entry.at)}',
+                            '${entry.label} — ${formatLocalTimestamp(entry.at)}',
                             style: monoStyle(size: 9),
                           ),
                           if (entry.reason?.trim().isNotEmpty == true)

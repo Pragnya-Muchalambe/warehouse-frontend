@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/viewer_request.dart';
 import 'api_client.dart';
 
@@ -28,10 +30,67 @@ class RequestService {
         .toList();
   }
 
-  Future<int> unseenDecisionCount(String viewerId, String section) async => 0;
+  Future<int> unseenDecisionCount(
+    String viewerId,
+    String section, {
+    String? storageViewerId,
+    Iterable<ViewerRequest>? requests,
+  }) async {
+    final values = requests ?? await loadRequests();
+    final seenAt =
+        await _lastSeenDecision(storageViewerId ?? viewerId, section);
+    return values
+        .where((request) => request.viewerId == viewerId)
+        .where((request) => request.section == section)
+        .map(_decisionInstant)
+        .whereType<DateTime>()
+        .where((instant) => seenAt == null || instant.isAfter(seenAt))
+        .length;
+  }
 
-  Future<void> markDecisionsSeen(String viewerId, String section,
-      Iterable<ViewerRequest> requests) async {}
+  Future<void> markDecisionsSeen(
+    String viewerId,
+    String section,
+    Iterable<ViewerRequest> requests, {
+    String? storageViewerId,
+  }) async {
+    DateTime? latest;
+    for (final request in requests
+        .where((request) => request.viewerId == viewerId)
+        .where((request) => request.section == section)) {
+      final instant = _decisionInstant(request);
+      if (instant != null && (latest == null || instant.isAfter(latest))) {
+        latest = instant;
+      }
+    }
+    if (latest == null) return;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(
+      _seenDecisionKey(storageViewerId ?? viewerId, section),
+      latest.toUtc().toIso8601String(),
+    );
+  }
+
+  DateTime? _decisionInstant(ViewerRequest request) {
+    if (request.status != 'Accepted' && request.status != 'Rejected') {
+      return null;
+    }
+    return request.decisionAt ?? request.updatedAt;
+  }
+
+  Future<DateTime?> _lastSeenDecision(
+      String storageViewerId, String section) async {
+    final preferences = await SharedPreferences.getInstance();
+    return DateTime.tryParse(
+      preferences.getString(_seenDecisionKey(storageViewerId, section)) ?? '',
+    );
+  }
+
+  String _seenDecisionKey(String storageViewerId, String section) {
+    final identity = Uri.encodeComponent(storageViewerId.trim().toLowerCase());
+    final scope = section.trim().toLowerCase();
+    return 'viewer.lastSeenDecision.$identity.$scope';
+  }
 
   Future<ViewerRequest> addRequest({
     required String viewerId,
