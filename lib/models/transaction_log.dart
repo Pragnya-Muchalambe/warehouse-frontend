@@ -10,6 +10,7 @@ class TransactionAttachment {
   final Uint8List? bytes;
   final String? fileId;
   final String? contentType;
+  final String? status;
   final int sizeBytes;
   final AttachmentUploadState uploadState;
   final String? uploadError;
@@ -19,6 +20,7 @@ class TransactionAttachment {
     this.bytes,
     this.fileId,
     this.contentType,
+    this.status,
     int? sizeBytes,
     AttachmentUploadState? uploadState,
     this.uploadError,
@@ -41,6 +43,7 @@ class TransactionAttachment {
         bytes: bytes ?? this.bytes,
         fileId: clearFileId ? null : (fileId ?? this.fileId),
         contentType: contentType,
+        status: status,
         sizeBytes: sizeBytes,
         uploadState: uploadState ?? this.uploadState,
         uploadError:
@@ -56,8 +59,11 @@ class TransactionAttachment {
         fileName: json['fileName'] as String? ?? 'Proof',
         fileId: json['id'] as String? ?? json['fileId'] as String?,
         contentType: json['contentType'] as String?,
+        status: json['status'] as String?,
         sizeBytes: (json['sizeBytes'] as num?)?.toInt(),
       );
+
+  bool get isReady => status == null || status == 'READY';
 }
 
 class CartItem {

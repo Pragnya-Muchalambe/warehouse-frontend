@@ -540,14 +540,22 @@ class _ViewerRequestsViewState extends State<ViewerRequestsView> {
                 ],
               ),
             ),
+            if (_cart.length > 1) ...[
+              const SizedBox(height: 12),
+              const MonoLabel(
+                'Each line is submitted as an independent request. If one fails, successful lines remain submitted and only failed lines can be retried.',
+                size: 9,
+                color: kInkMuted,
+              ),
+            ],
             const SizedBox(height: 24),
             BrutalButton(
-                label: _submitting ? 'SENDING...' : 'CONFIRM REQUESTS',
+                label: _submitting ? 'SENDING...' : 'CONFIRM REQUEST',
                 filled: true,
                 onPressed: _submitting ? null : _confirmRequests),
             const SizedBox(height: 12),
             BrutalButton(
-                label: 'BACK TO CART',
+                label: 'BACK',
                 onPressed: _submitting
                     ? null
                     : () => setState(() => _reviewing = false)),

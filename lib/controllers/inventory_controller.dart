@@ -48,6 +48,17 @@ class InventoryController extends ChangeNotifier {
   InventorySection get activeSection => _activeSection;
   bool get supportsFactoryDeletion => _service.supportsFactoryDeletion;
 
+  void clearSession() {
+    _role = null;
+    _inventory = [];
+    _logs = [];
+    _auditLogs = [];
+    _factories = [];
+    _loading = false;
+    lastErrorMessage = null;
+    notifyListeners();
+  }
+
   Future<Uint8List> downloadFile(String fileId) =>
       _service.downloadFile(fileId);
 
@@ -661,7 +672,6 @@ class InventoryController extends ChangeNotifier {
       _inventory = results[0] as List<InventoryItem>;
       _factories = results[1] as List<WarehouseFactory>;
     } on ApiException catch (error) {
-      _inventory = [];
       lastErrorMessage =
           'The decision succeeded, but inventory refresh failed: ${error.message}';
     }

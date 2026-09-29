@@ -554,8 +554,7 @@ class _AuditCard extends StatelessWidget {
       const {'TRANSACTION_CREATED', 'TRANSACTION_CORRECTED'}
           .contains(log.eventType);
 
-  bool get _showsRequestBill =>
-      log.entityType == 'REQUEST' && log.billFile != null;
+  bool get _showsRequestBill => log.isMaterialRequest && log.billFile != null;
 
   List<String> get _summaryLines {
     final lines = <String>[];
@@ -807,6 +806,7 @@ class _AttachmentState extends State<_Attachment> {
   bool _loading = false;
 
   Future<void> _open(BuildContext context) async {
+    if (!widget.file.isReady) return;
     try {
       var bytes = widget.inlineBytes;
       if (bytes == null) {
@@ -843,6 +843,7 @@ class _AttachmentState extends State<_Attachment> {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: _loading ||
+              !widget.file.isReady ||
               (widget.inlineBytes == null &&
                   (widget.downloadFile == null || widget.file.id.isEmpty))
           ? null
@@ -865,7 +866,7 @@ class _AttachmentState extends State<_Attachment> {
             const SizedBox(width: 4),
             Flexible(
               child: Text(
-                '${_loading ? 'Loading' : widget.label}: ${widget.file.fileName}',
+                '${_loading ? 'Loading' : widget.file.isReady ? widget.label : 'Unavailable (${widget.file.status})'}: ${widget.file.fileName}',
                 overflow: TextOverflow.ellipsis,
                 style: monoStyle(size: 9),
               ),

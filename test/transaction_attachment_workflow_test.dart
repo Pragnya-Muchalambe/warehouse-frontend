@@ -13,6 +13,43 @@ import 'package:warehouse_poc/views/transactions_view.dart';
 import 'fake_inventory_service.dart';
 
 void main() {
+  testWidgets('Incoming and Dispatch show the exact required Bill guidance',
+      (tester) async {
+    final controller = InventoryController(
+      inventoryService: FakeInventoryService(),
+    );
+    addTearDown(controller.dispose);
+    await controller.init(role: 'admin');
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(),
+      home: Scaffold(
+        body: TransactionsView(
+          controller: controller,
+          addTransaction: controller.addTransaction,
+          session: const AuthSession(
+            username: 'admin',
+            role: 'admin',
+            name: 'Admin',
+            id: 'admin-id',
+          ),
+          fixedSection: InventorySection.depot,
+          filePicker: _Picker(() => null),
+        ),
+      ),
+    ));
+
+    for (final action in ['New Incoming', 'New Dispatch']) {
+      await tester.tap(find.text(action));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Please upload the Bill before submitting this transaction.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+    }
+  });
+
   testWidgets('Bill and multiple Proof picker state is byte-backed and stable',
       (tester) async {
     final controller = InventoryController(
@@ -118,7 +155,8 @@ void main() {
                   items: const [],
                   bill: 'bill.png'))),
     ));
-    expect(find.text('PROOFS (0)'), findsOneWidget);
+    expect(find.text('proof-0.pdf'), findsNothing);
+    expect(find.text('proof-10.pdf'), findsNothing);
     expect(find.text('NO PROOF ATTACHED'), findsOneWidget);
   });
 
@@ -234,6 +272,25 @@ void main() {
           'does not match its PDF, JPEG, PNG, or WebP extension'),
       findsWidgets,
     );
+  });
+
+  testWidgets('proof selection is capped by the backend limit before upload',
+      (tester) async {
+    final picker = _Picker(() => List.generate(
+          11,
+          (index) => PickedTransactionFile(
+            'proof-$index.pdf',
+            Uint8List.fromList('%PDF-1.7'.codeUnits),
+          ),
+        ));
+    await _pumpTransactions(tester, picker);
+
+    await tester.tap(find.text('ADD PROOF'));
+    await tester.pump();
+
+    expect(find.text('proof-0.pdf'), findsNothing);
+    expect(find.text('proof-10.pdf'), findsNothing);
+    expect(find.text('You can attach up to 10 Proof files.'), findsOneWidget);
   });
 }
 

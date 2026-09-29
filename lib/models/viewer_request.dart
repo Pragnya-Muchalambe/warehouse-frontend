@@ -262,6 +262,7 @@ class ViewerRequest {
                 : null,
             fileId: bill['id'] as String? ?? bill['fileId'] as String?,
             contentType: bill['contentType'] as String?,
+            status: bill['status'] as String?,
             sizeBytes: (bill['sizeBytes'] as num?)?.toInt(),
           ),
         _ => null,

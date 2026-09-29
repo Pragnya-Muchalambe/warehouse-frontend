@@ -377,6 +377,21 @@ void main() {
     expect(find.textContaining('View Bill'), findsOneWidget);
     expect(find.textContaining('PROOF'), findsNothing);
 
+    await tester.pumpWidget(_logsFor(logs: [
+      _requestAudit(
+        id: 'material-request-with-bill',
+        entityType: 'MATERIAL_REQUEST',
+        billFile: const AuditFileMetadata(
+          id: 'material-request-bill-id',
+          purpose: 'BILL',
+          fileName: 'material-request-bill.pdf',
+          contentType: 'application/pdf',
+        ),
+      ),
+    ]));
+    expect(find.text('BILL'), findsOneWidget);
+    expect(find.textContaining('View Bill'), findsOneWidget);
+
     await tester.pumpWidget(_logsFor(
       logs: [_requestAudit(id: 'request-without-bill')],
     ));
@@ -548,12 +563,13 @@ AuditLog _transactionAudit(String transactionId) => AuditLog(
 
 AuditLog _requestAudit({
   required String id,
+  String entityType = 'REQUEST',
   AuditFileMetadata? billFile,
 }) =>
     AuditLog(
       id: id,
       eventType: 'REQUEST_ACCEPTED',
-      entityType: 'REQUEST',
+      entityType: entityType,
       entityId: id,
       actor: const AuditActor(
         id: 'admin-id',

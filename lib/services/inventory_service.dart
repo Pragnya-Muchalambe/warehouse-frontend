@@ -11,7 +11,7 @@ class InventoryService {
 
   final ApiClient _api;
 
-  bool get supportsFactoryDeletion => false;
+  bool get supportsFactoryDeletion => true;
 
   Future<Uint8List> downloadFile(String fileId) => _api.downloadFile(fileId);
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/account_request_service.dart';
+import '../services/api_client.dart';
 import '../theme.dart';
 import '../widgets/brutal.dart';
 
@@ -62,11 +63,19 @@ class _NewUserRequestViewState extends State<NewUserRequestView> {
           id: _idController.text.trim().toUpperCase(),
           password: _passwordController.text,
           role: _role!);
-    } catch (error) {
+    } on ApiException catch (error) {
       if (mounted) {
         setState(() {
           _submitting = false;
-          _idError = error.toString();
+          _idError = error.message;
+        });
+      }
+      return;
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _idError = 'Unable to send the account request. Please try again.';
         });
       }
       return;

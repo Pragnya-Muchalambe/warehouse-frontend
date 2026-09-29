@@ -80,8 +80,7 @@ void main() {
     expect(api.accessToken, isNull);
   });
 
-  test('failed logout keeps the active session instead of claiming success',
-      () async {
+  test('failed logout still revokes the local access token', () async {
     final api = ApiClient(
       httpClient: MockClient(
         (_) async => http.Response(
@@ -96,7 +95,7 @@ void main() {
     final auth = AuthService(api: api);
 
     await expectLater(auth.logout(), throwsA(isA<ApiException>()));
-    expect(api.accessToken, 'access-token');
+    expect(api.accessToken, isNull);
   });
 
   test('concurrent expired requests share one refresh', () async {

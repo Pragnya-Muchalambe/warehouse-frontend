@@ -63,7 +63,16 @@ class _LoginViewState extends State<LoginView> {
         _submitting = false;
       });
     } else {
-      await widget.onLogin(session);
+      try {
+        await widget.onLogin(session);
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _error = 'Unable to initialize your account. Please try again.';
+            _submitting = false;
+          });
+        }
+      }
     }
   }
 

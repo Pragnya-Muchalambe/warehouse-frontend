@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import 'credentialed_http_client.dart';
@@ -61,17 +61,19 @@ class ApiPage<T> {
 }
 
 class ApiClient {
-  ApiClient({http.Client? httpClient})
-      : _httpClient = httpClient ?? createCredentialedHttpClient();
+  ApiClient({http.Client? httpClient, String? baseUrl})
+      : _httpClient = httpClient ?? createCredentialedHttpClient(),
+        _configuredBaseUrl = baseUrl ?? _environmentBaseUrl;
 
   static final instance = ApiClient();
   static const _uuid = Uuid();
-  static const String _configuredBaseUrl = String.fromEnvironment(
+  static const String _environmentBaseUrl = String.fromEnvironment(
     'WAREHOUSE_API_BASE_URL',
     defaultValue: 'http://localhost:8000',
   );
 
   final http.Client _httpClient;
+  final String _configuredBaseUrl;
   final Map<String, String> _pendingIdempotencyKeys = {};
   final Map<String, String> _pendingUploadIdempotencyKeys = {};
   static const _requestTimeout = Duration(seconds: 30);
@@ -79,8 +81,28 @@ class ApiClient {
   Future<bool> Function()? refreshAccessToken;
 
   String get _baseUrl {
-    final base = _configuredBaseUrl.replaceFirst(RegExp(r'/$'), '');
+    final base = validateBaseUrl(_configuredBaseUrl);
     return base.endsWith('/api/v1') ? base : '$base/api/v1';
+  }
+
+  @visibleForTesting
+  static String validateBaseUrl(String configured, {bool? requireHttps}) {
+    final base = configured.trim().replaceFirst(RegExp(r'/$'), '');
+    final uri = Uri.tryParse(base);
+    final httpsRequired = requireHttps ?? kReleaseMode;
+    final isLocalhost = uri?.host == 'localhost' ||
+        uri?.host == '127.0.0.1' ||
+        uri?.host == '::1';
+    final validScheme = uri?.scheme == 'https' ||
+        (!httpsRequired && uri?.scheme == 'http' && isLocalhost);
+    if (uri == null || !uri.hasAuthority || uri.host.isEmpty || !validScheme) {
+      throw StateError(
+        httpsRequired
+            ? 'WAREHOUSE_API_BASE_URL must be a valid HTTPS URL.'
+            : 'WAREHOUSE_API_BASE_URL must use HTTPS or local development HTTP.',
+      );
+    }
+    return base;
   }
 
   Uri _uri(String path, [Map<String, String>? query]) =>

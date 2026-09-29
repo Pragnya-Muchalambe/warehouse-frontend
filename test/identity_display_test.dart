@@ -75,6 +75,30 @@ ViewerRequest _request({
     );
 
 void main() {
+  test('linked requests must exactly fulfil each linked material', () {
+    expect(
+      dispatchRequestQuantitiesMatch(
+        const {'rail-pad': 7},
+        const {'rail-pad': 3 + 4},
+      ),
+      isTrue,
+    );
+    expect(
+      dispatchRequestQuantitiesMatch(
+        const {'rail-pad': 7},
+        const {'rail-pad': 3},
+      ),
+      isFalse,
+    );
+    expect(
+      dispatchRequestQuantitiesMatch(
+        const {'rail-pad': 7},
+        const {},
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets('profile drawers show account IDs and never internal UUIDs',
       (tester) async {
     final controller = await _controller();

@@ -109,12 +109,12 @@ void main() {
     expect(find.textContaining('private.pdf'), findsNothing);
     expect(find.textContaining('PROOF'), findsNothing);
 
-    await tester.tap(find.text('VIEW BILL').first);
+    await tester.tap(find.text('VIEW BILL').last);
     await tester.pump();
     expect(find.byType(PdfViewer), findsOneWidget);
     await tester.tap(find.byTooltip('Close'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('VIEW BILL').last);
+    await tester.tap(find.text('VIEW BILL').first);
     await tester.pump();
     expect(find.byType(Image), findsWidgets);
   });

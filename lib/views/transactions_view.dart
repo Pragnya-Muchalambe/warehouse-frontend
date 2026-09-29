@@ -18,6 +18,16 @@ import '../widgets/brutal.dart';
 import '../widgets/attachment_preview.dart';
 import '../widgets/section_tabs.dart' show FactoryFilterChips;
 
+bool dispatchRequestQuantitiesMatch(
+  Map<String, int> dispatchQuantities,
+  Map<String, int> linkedRequestQuantities,
+) {
+  if (linkedRequestQuantities.isEmpty) return true;
+  return linkedRequestQuantities.entries.every(
+    (entry) => dispatchQuantities[entry.key] == entry.value,
+  );
+}
+
 enum _TransactionForm { incoming, dispatch }
 
 class TransactionsView extends StatefulWidget {
@@ -184,7 +194,7 @@ class _TransactionsViewState extends State<TransactionsView> {
       if (next > (_dispatchQuantities[request.itemId] ?? 0)) return false;
       used[request.itemId] = next;
     }
-    return true;
+    return dispatchRequestQuantitiesMatch(_dispatchQuantities, used);
   }
 
   void _selectInitialFactory() {
@@ -382,7 +392,6 @@ class _TransactionsViewState extends State<TransactionsView> {
 
   List<String> get _validationProblems {
     final problems = <String>[];
-    if (_billAttachment?.bytes == null) problems.add('Upload a Bill');
     if (_section == InventorySection.sleeper && !_isFactoryScope) {
       problems.add('Select a factory');
     }
@@ -450,11 +459,10 @@ class _TransactionsViewState extends State<TransactionsView> {
     } catch (error, stackTrace) {
       if (kDebugMode) {
         debugPrint(
-            'Transaction file picker failed (${isBill ? 'Bill' : 'Proof'}, multiple: ${!isBill && replaceProofIndex == null}, picker: ${widget.filePicker.runtimeType}): $error\n$stackTrace');
+            'Transaction file picker failed (${isBill ? 'Bill' : 'Proof'}, error: ${error.runtimeType}).');
+        debugPrintStack(stackTrace: stackTrace);
       }
-      _showMessage(kDebugMode
-          ? 'Unable to open the file picker: ${error.runtimeType}: $error'
-          : 'Unable to open the file picker. Please try again.');
+      _showMessage('Unable to open the file picker. Please try again.');
       if (mounted) {
         setState(() {
           _pickingBill = false;
@@ -531,6 +539,18 @@ class _TransactionsViewState extends State<TransactionsView> {
         contentType: expectedType,
         sizeBytes: file.size,
       ));
+    }
+    if (!isBill && replaceProofIndex == null) {
+      final additions = attachments.where((attachment) => !_proofs.any(
+            (proof) =>
+                proof.fileName.toLowerCase() ==
+                    attachment.fileName.toLowerCase() &&
+                proof.bytes?.lengthInBytes == attachment.bytes?.lengthInBytes,
+          ));
+      if (_proofs.length + additions.length > 10) {
+        _showMessage('You can attach up to 10 Proof files.');
+        return;
+      }
     }
     setState(() {
       if (isBill) {
@@ -1374,7 +1394,8 @@ class _TransactionsViewState extends State<TransactionsView> {
                     ),
                     const SizedBox(height: 20),
                   ],
-                  if (_validationProblems.isNotEmpty) ...[
+                  if (_billAttachment?.bytes == null ||
+                      _validationProblems.isNotEmpty) ...[
                     BrutalCard(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1384,6 +1405,11 @@ class _TransactionsViewState extends State<TransactionsView> {
                               weight: FontWeight.w700,
                               color: kRed),
                           const SizedBox(height: 8),
+                          if (_billAttachment?.bytes == null)
+                            Text(
+                              'Please upload the Bill before submitting this transaction.',
+                              style: monoStyle(size: 9, color: kRed),
+                            ),
                           for (final problem in _validationProblems)
                             Text('- $problem',
                                 style: monoStyle(size: 9, color: kRed)),
@@ -1648,6 +1674,7 @@ class ActionRecordCard extends StatelessWidget {
                 fileId: indexed.$2.fileId,
                 attachmentBytes: indexed.$2.bytes,
                 contentType: indexed.$2.contentType,
+                ready: indexed.$2.isReady,
                 downloadFile: downloadFile,
               )
           else
@@ -1685,6 +1712,7 @@ class _RecordAttachment extends StatelessWidget {
   final String? fileId;
   final Uint8List? attachmentBytes;
   final String? contentType;
+  final bool ready;
   final Future<Uint8List> Function(String fileId)? downloadFile;
 
   const _RecordAttachment({
@@ -1694,15 +1722,17 @@ class _RecordAttachment extends StatelessWidget {
     required this.fileId,
     this.attachmentBytes,
     this.contentType,
+    this.ready = true,
     this.downloadFile,
   });
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: data == null && fileId == null && attachmentBytes == null
-          ? null
-          : () => _showPreview(context),
+      onTap:
+          !ready || (data == null && fileId == null && attachmentBytes == null)
+              ? null
+              : () => _showPreview(context),
       child: Container(
         constraints: const BoxConstraints(maxWidth: 260),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -1758,6 +1788,13 @@ class _RecordAttachment extends StatelessWidget {
       }
       return;
     } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to load this attachment. Please try again.'),
+          ),
+        );
+      }
       return;
     }
     if (!context.mounted) return;

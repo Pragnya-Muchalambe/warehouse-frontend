@@ -79,8 +79,8 @@ class _SuperadminRequestsViewState extends State<SuperadminRequestsView> {
   }
 
   int _requestOrder(ViewerRequest a, ViewerRequest b) {
-    final pending = (b.isPending ? 1 : 0).compareTo(a.isPending ? 1 : 0);
-    return pending != 0 ? pending : b.createdAt.compareTo(a.createdAt);
+    final created = b.createdAt.compareTo(a.createdAt);
+    return created != 0 ? created : a.id.compareTo(b.id);
   }
 
   Future<void> _accept(ViewerRequest request) async {

@@ -19,6 +19,53 @@ import 'package:warehouse_poc/services/request_service.dart';
 import 'fake_inventory_service.dart';
 
 void main() {
+  test('API base URL requires HTTPS outside local development', () {
+    expect(
+      ApiClient.validateBaseUrl('https://warehouse.example.com/'),
+      'https://warehouse.example.com',
+    );
+    expect(
+      ApiClient.validateBaseUrl('http://localhost:8000'),
+      'http://localhost:8000',
+    );
+    expect(
+      () => ApiClient.validateBaseUrl('http://warehouse.example.com'),
+      throwsStateError,
+    );
+    expect(
+      () => ApiClient.validateBaseUrl(
+        'http://localhost:8000',
+        requireHttps: true,
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('explicit attachment lifecycle status controls availability', () {
+    expect(
+      const TransactionAttachment(fileName: 'legacy.pdf', fileId: 'legacy')
+          .isReady,
+      isTrue,
+    );
+    expect(
+      const TransactionAttachment(
+        fileName: 'scanning.pdf',
+        fileId: 'scanning',
+        status: 'SCANNING',
+      ).isReady,
+      isFalse,
+    );
+    expect(
+      const AuditFileMetadata(
+        id: 'ready',
+        purpose: 'BILL',
+        fileName: 'ready.pdf',
+        status: 'READY',
+      ).isReady,
+      isTrue,
+    );
+  });
+
   test('unknown roles are rejected instead of receiving a privileged shell',
       () {
     expect(

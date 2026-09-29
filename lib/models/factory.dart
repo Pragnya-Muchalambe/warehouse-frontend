@@ -173,6 +173,10 @@ class WarehouseFactory {
       };
 
   factory WarehouseFactory.fromJson(Map<String, dynamic> json) {
+    final version = (json['version'] as num?)?.toInt();
+    if (version == null || version < 1) {
+      throw const FormatException('Factory version is missing or invalid.');
+    }
     return WarehouseFactory(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '',
@@ -180,7 +184,7 @@ class WarehouseFactory {
       materials: (json['materials'] as List? ?? [])
           .map((e) => FactoryMaterial.fromJson(e as Map<String, dynamic>))
           .toList(),
-      version: (json['version'] as num?)?.toInt() ?? 1,
+      version: version,
       materialCount: (json['materialCount'] as num?)?.toInt() ??
           (json['materials'] as List?)?.length ??
           0,

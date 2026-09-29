@@ -83,6 +83,8 @@ class AuditFileMetadata {
         if (referenced != null) 'referenced': referenced,
         if (version != null) 'version': version,
       };
+
+  bool get isReady => status == null || status == 'READY';
 }
 
 class AuditLog {
@@ -144,6 +146,8 @@ class AuditLog {
       };
   String? get factoryId => _snapshotValue('factoryId') ?? topLevelFactoryId;
   String? get factoryNameSnapshot => _snapshotValue('factoryNameSnapshot');
+  bool get isMaterialRequest =>
+      entityType == 'MATERIAL_REQUEST' || entityType == 'REQUEST';
 
   String? _snapshotValue(String key) {
     final value = after?[key] ?? before?[key];

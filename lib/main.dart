@@ -69,9 +69,15 @@ class _WarehouseAppState extends State<WarehouseApp> {
   }
 
   Future<void> _handleLogout() async {
-    await _authService.logout();
     if (mounted) {
       setState(() => _session = null);
+    }
+    _inventoryController.clearSession();
+    try {
+      await _authService.logout();
+    } catch (_) {
+      // Local credentials and protected state are cleared even when the
+      // server cannot invalidate its refresh cookie.
     }
   }
 

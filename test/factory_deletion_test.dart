@@ -124,7 +124,27 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  test('real API service does not advertise factory deletion', () {
-    expect(InventoryService().supportsFactoryDeletion, isFalse);
+  test('real API service advertises factory deletion', () {
+    expect(InventoryService().supportsFactoryDeletion, isTrue);
+  });
+
+  test('factory API parsing requires a valid concurrency version', () {
+    expect(
+      () => WarehouseFactory.fromJson({
+        'id': 'factory-id',
+        'name': 'Factory',
+        'location': 'North',
+      }),
+      throwsFormatException,
+    );
+    expect(
+      () => WarehouseFactory.fromJson({
+        'id': 'factory-id',
+        'name': 'Factory',
+        'location': 'North',
+        'version': 0,
+      }),
+      throwsFormatException,
+    );
   });
 }

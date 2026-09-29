@@ -45,6 +45,12 @@ class _ViewerHistoryViewState extends State<ViewerHistoryView> {
   }
 
   Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _requests = null;
+        _error = null;
+      });
+    }
     try {
       final all = await _service.loadRequests();
       final mine = all
@@ -53,7 +59,10 @@ class _ViewerHistoryViewState extends State<ViewerHistoryView> {
           .where((r) =>
               widget.factoryId == null || r.factoryId == widget.factoryId)
           .toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        ..sort((a, b) {
+          final created = b.createdAt.compareTo(a.createdAt);
+          return created != 0 ? created : a.id.compareTo(b.id);
+        });
       if (mounted) {
         setState(() => _requests = mine);
         await _service.markDecisionsSeen(
@@ -66,11 +75,11 @@ class _ViewerHistoryViewState extends State<ViewerHistoryView> {
         );
         widget.onLoaded?.call();
       }
-    } on ApiException catch (error) {
+    } on ApiException {
       if (mounted) {
         setState(() {
           _requests = const [];
-          _error = error.message;
+          _error = 'Unable to load request history.';
         });
       }
     }
@@ -89,7 +98,16 @@ class _ViewerHistoryViewState extends State<ViewerHistoryView> {
       );
     }
     if (_error != null) {
-      return Center(child: MonoLabel(_error!, color: kRed));
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MonoLabel(_error!, color: kRed),
+            const SizedBox(height: 12),
+            BrutalButton(label: 'RETRY', onPressed: _load),
+          ],
+        ),
+      );
     }
     return MaxWidth(
       child: requests.isEmpty
@@ -228,10 +246,11 @@ class _RequestHistoryCardState extends State<_RequestHistoryCard> {
             const SizedBox(height: 6),
             BrutalButton(
               label: _loadingBill ? 'LOADING...' : 'VIEW BILL',
-              onPressed:
-                  _loadingBill || (bill.bytes == null && bill.fileId == null)
-                      ? null
-                      : () => _showBill(bill),
+              onPressed: _loadingBill ||
+                      !bill.isReady ||
+                      (bill.bytes == null && bill.fileId == null)
+                  ? null
+                  : () => _showBill(bill),
             ),
           ] else
             const MonoLabel('Bill: Not available', size: 9, color: kGray400),

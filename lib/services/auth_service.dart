@@ -134,13 +134,16 @@ class AuthService {
   }
 
   Future<void> logout() async {
-    await _api.sendJson(
-      'POST',
-      '/auth/logout',
-      useIdempotencyKey: false,
-      allowRefresh: false,
-    );
-    await _clearTokens();
+    try {
+      await _api.sendJson(
+        'POST',
+        '/auth/logout',
+        useIdempotencyKey: false,
+        allowRefresh: false,
+      );
+    } finally {
+      await _clearTokens();
+    }
   }
 
   Future<void> _clearTokens() async {

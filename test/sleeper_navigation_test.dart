@@ -127,7 +127,7 @@ Future<void> _submitSleeperRequest(WidgetTester tester) async {
   await tester.ensureVisible(reviewButton);
   await tester.tap(reviewButton);
   await tester.pumpAndSettle();
-  final confirmButton = find.text('CONFIRM REQUESTS');
+  final confirmButton = find.text('CONFIRM REQUEST');
   await tester.ensureVisible(confirmButton);
   await tester.tap(confirmButton);
   await tester.pumpAndSettle();

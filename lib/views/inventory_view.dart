@@ -521,22 +521,19 @@ class _InventoryViewState extends State<InventoryView> {
         false;
     if (!confirmed || !mounted) return;
 
-    final wasSelected = _selectedFactoryId == factoryId;
     setState(() {
       _deletingFactoryId = factoryId;
-      if (wasSelected) _selectedFactoryId = null;
     });
-    if (wasSelected) widget.onOpenSleeperActions?.call(null);
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted) return;
 
     final deleted = await _controller.deleteFactory(factoryId);
     if (!mounted) return;
     setState(() {
       _deletingFactoryId = null;
-      if (!deleted && wasSelected) _selectedFactoryId = factoryId;
+      if (deleted && _selectedFactoryId == factoryId) {
+        _selectedFactoryId = null;
+      }
     });
-    if (!deleted && wasSelected) widget.onOpenSleeperActions?.call(factoryId);
+    if (deleted) widget.onOpenSleeperActions?.call(null);
     final message = deleted
         ? _controller.lastErrorMessage ?? 'Factory deleted.'
         : _controller.lastErrorMessage ?? 'Unable to delete factory.';
