@@ -71,10 +71,7 @@ class AuthService {
         useIdempotencyKey: false,
         allowRefresh: false,
       ) as Map<String, dynamic>;
-      final session = AuthSession.fromApi(
-        data['user'] as Map<String, dynamic>,
-      );
-      _storeAccessToken(data);
+      final session = _sessionFromTokenResponse(data);
       return session;
     } on ApiException catch (error) {
       await _clearTokensSafely();
@@ -116,7 +113,7 @@ class AuthService {
         useIdempotencyKey: false,
         allowRefresh: false,
       ) as Map<String, dynamic>;
-      _storeAccessToken(data);
+      _sessionFromTokenResponse(data);
       return true;
     } catch (_) {
       await _clearTokens();
@@ -124,13 +121,24 @@ class AuthService {
     }
   }
 
-  void _storeAccessToken(Map<String, dynamic> data) {
+  AuthSession _sessionFromTokenResponse(Map<String, dynamic> data) {
     final accessToken = data['accessToken'];
-    if (accessToken is! String || accessToken.isEmpty) {
+    final expiresAt = data['accessTokenExpiresAt'];
+    final tokenType = data['tokenType'];
+    final user = data['user'];
+    final parsedExpiry =
+        expiresAt is String ? DateTime.tryParse(expiresAt) : null;
+    if (accessToken is! String ||
+        accessToken.isEmpty ||
+        parsedExpiry == null ||
+        !parsedExpiry.isUtc ||
+        tokenType != 'Bearer' ||
+        user is! Map<String, dynamic>) {
       throw const ApiException(
-          'The server returned an invalid access token.', 0);
+          'The server returned an invalid authentication response.', 0);
     }
     _api.accessToken = accessToken;
+    return AuthSession.fromApi(user);
   }
 
   Future<void> logout() async {

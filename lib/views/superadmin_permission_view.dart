@@ -92,7 +92,7 @@ class _SuperadminPermissionViewState extends State<SuperadminPermissionView> {
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-            title: const Text('Delete Employee Account?'),
+            title: const Text('Deactivate Employee Account?'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -112,7 +112,7 @@ class _SuperadminPermissionViewState extends State<SuperadminPermissionView> {
               ),
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Delete Account'),
+                child: const Text('Deactivate Account'),
               ),
             ],
           ),
@@ -128,7 +128,7 @@ class _SuperadminPermissionViewState extends State<SuperadminPermissionView> {
       await _reload();
       widget.onAccountDeleted?.call(user);
       widget.onRequestsChanged?.call();
-      _showMessage('Account deleted. The user can no longer log in.');
+      _showMessage('Account deactivated. The user can no longer log in.');
     } on ApiException catch (error) {
       if (error.isVersionConflict) await _reload();
       _showMessage(error.message);
@@ -164,7 +164,7 @@ class _SuperadminPermissionViewState extends State<SuperadminPermissionView> {
                   user.role.toLowerCase().contains(normalized))
               .toList();
           return AlertDialog(
-            title: const Text('Delete Employee Account'),
+            title: const Text('Deactivate Employee Account'),
             content: SizedBox(
               width: 480,
               child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -336,8 +336,8 @@ class _SuperadminPermissionViewState extends State<SuperadminPermissionView> {
                           const SizedBox(height: 10),
                           BrutalButton(
                             label: _deletingUserId == null
-                                ? 'DELETE EMPLOYEE ACCOUNT'
-                                : 'DELETING...',
+                                ? 'DEACTIVATE EMPLOYEE ACCOUNT'
+                                : 'DEACTIVATING...',
                             onPressed:
                                 widget.session.role == 'superadmin' && !_busy
                                     ? _showEmployeeSelector

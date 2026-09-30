@@ -30,6 +30,8 @@ void main() {
         loginRequest = request;
         return _dataResponse({
           'accessToken': 'access-token',
+          'accessTokenExpiresAt': '2026-09-02T10:00:00.000Z',
+          'tokenType': 'Bearer',
           'refreshToken': 'must-be-ignored',
           'user': _user,
         });
@@ -58,7 +60,12 @@ void main() {
               jsonDecode(jsonRequest.body) as Map<String, dynamic>;
         }
         if (request.url.path.endsWith('/auth/refresh')) {
-          return _dataResponse({'accessToken': 'access-token'});
+          return _dataResponse({
+            'accessToken': 'access-token',
+            'accessTokenExpiresAt': '2026-09-02T10:00:00.000Z',
+            'tokenType': 'Bearer',
+            'user': _user,
+          });
         }
         if (request.url.path.endsWith('/auth/me')) {
           return _dataResponse(_user);
@@ -107,7 +114,12 @@ void main() {
         if (request.url.path.endsWith('/auth/refresh')) {
           refreshes++;
           await bothExpired.future;
-          return _dataResponse({'accessToken': 'new-access-token'});
+          return _dataResponse({
+            'accessToken': 'new-access-token',
+            'accessTokenExpiresAt': '2026-09-02T10:00:00.000Z',
+            'tokenType': 'Bearer',
+            'user': _user,
+          });
         }
         if (request.headers['Authorization'] == 'Bearer old-access-token') {
           expiredRequests++;

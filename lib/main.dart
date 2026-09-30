@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app_dependencies.dart';
 import 'controllers/inventory_controller.dart';
 import 'services/auth_service.dart';
+import 'services/api_client.dart';
 import 'theme.dart';
 import 'views/admin_shell.dart';
 import 'views/login_view.dart';
@@ -31,6 +32,7 @@ class _WarehouseAppState extends State<WarehouseApp> {
   late final AuthService _authService;
   AuthSession? _session;
   bool _booting = true;
+  String? _configurationError;
 
   @override
   void initState() {
@@ -43,6 +45,11 @@ class _WarehouseAppState extends State<WarehouseApp> {
   }
 
   Future<void> _bootstrap() async {
+    _configurationError = ApiClient.instance.configurationError;
+    if (_configurationError != null) {
+      if (mounted) setState(() => _booting = false);
+      return;
+    }
     final session = await _authService.getSession();
     if (session != null) {
       try {
@@ -112,6 +119,27 @@ class _WarehouseAppState extends State<WarehouseApp> {
               SizedBox(height: 16),
               MonoLabel('Loading System'),
             ],
+          ),
+        ),
+      );
+    }
+
+    if (_configurationError != null) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: BrutalCard(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('CONFIGURATION REQUIRED'),
+                  const SizedBox(height: 12),
+                  MonoLabel(_configurationError!, color: kRed),
+                ],
+              ),
+            ),
           ),
         ),
       );

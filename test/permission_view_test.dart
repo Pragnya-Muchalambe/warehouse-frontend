@@ -26,8 +26,8 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('PENDING OPERATOR'), findsOneWidget);
-    expect(find.text('DELETE EMPLOYEE ACCOUNT'), findsOneWidget);
-    await tester.tap(find.text('DELETE EMPLOYEE ACCOUNT'));
+    expect(find.text('DEACTIVATE EMPLOYEE ACCOUNT'), findsOneWidget);
+    await tester.tap(find.text('DEACTIVATE EMPLOYEE ACCOUNT'));
     await tester.pumpAndSettle();
     expect(
         find.textContaining('Viewer User — viewer — Viewer'), findsOneWidget);
@@ -74,12 +74,12 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('DELETE EMPLOYEE ACCOUNT'));
+    await tester.tap(find.text('DEACTIVATE EMPLOYEE ACCOUNT'));
     await tester.pumpAndSettle();
     await tester.tap(find.textContaining('Viewer User — viewer — Viewer'));
     await tester.pumpAndSettle();
     expect(find.text('Employee: Viewer User'), findsOneWidget);
-    await tester.tap(find.text('Delete Account'));
+    await tester.tap(find.text('Deactivate Account'));
     await tester.pumpAndSettle();
     expect(await auth.login('viewer', 'viewer123456'), isNull);
     expect(await auth.login('admin', 'admin123456'), isNotNull);

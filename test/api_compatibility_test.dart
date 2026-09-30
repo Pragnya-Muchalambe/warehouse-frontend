@@ -41,6 +41,31 @@ void main() {
     );
   });
 
+  test('base URL appends the API path exactly once', () {
+    expect(
+      ApiClient.resolveBaseUrl('https://warehouse.example.com'),
+      'https://warehouse.example.com/api/v1',
+    );
+    expect(
+      ApiClient.resolveBaseUrl('https://warehouse.example.com/api/v1/'),
+      'https://warehouse.example.com/api/v1',
+    );
+  });
+
+  test('production configuration rejects missing and insecure API URLs', () {
+    expect(
+      () => ApiClient.resolveBaseUrl('', production: true),
+      throwsStateError,
+    );
+    expect(
+      () => ApiClient.resolveBaseUrl(
+        'http://localhost:8000',
+        production: true,
+      ),
+      throwsStateError,
+    );
+  });
+
   test('explicit attachment lifecycle status controls availability', () {
     expect(
       const TransactionAttachment(fileName: 'legacy.pdf', fileId: 'legacy')
@@ -190,6 +215,56 @@ void main() {
                 'Quantity is invalid.'),
       ),
     );
+  });
+
+  test('successful JSON envelopes require a non-empty request ID', () async {
+    final valid = ApiClient(
+      httpClient: MockClient((_) async => _successResponse({'id': 'item'})),
+    );
+    expect(await valid.get('/inventory'), {'id': 'item'});
+
+    for (final meta in [
+      null,
+      <String, dynamic>{},
+      <String, dynamic>{'requestId': null},
+      <String, dynamic>{'requestId': '  '},
+      <String, dynamic>{'requestId': 42},
+    ]) {
+      final api = ApiClient(
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'data': {'id': 'item'},
+              'meta': meta
+            }),
+            200,
+          ),
+        ),
+      );
+      await expectLater(api.get('/inventory'), throwsA(isA<ApiException>()));
+    }
+  });
+
+  test('204 JSON mutations do not require an envelope', () async {
+    final api = ApiClient(
+      httpClient: MockClient((_) async => http.Response('', 204)),
+    );
+    expect(
+      await api.sendJson('POST', '/auth/logout', useIdempotencyKey: false),
+      isNull,
+    );
+  });
+
+  test('collection metadata is validated instead of silently defaulted',
+      () async {
+    final api = ApiClient(
+      httpClient: MockClient(
+        (_) async => _successResponse({
+          'not': 'a-list',
+        }),
+      ),
+    );
+    await expectLater(api.getPage('/inventory'), throwsA(isA<ApiException>()));
   });
 
   test('auth retry reuses mutation idempotency key', () async {
@@ -416,6 +491,24 @@ void main() {
     expect(jsonDecode(captured!.body), <String, dynamic>{});
   });
 
+  test('factory archival uses authoritative ID, version, and idempotency',
+      () async {
+    http.Request? captured;
+    final api = ApiClient(
+      httpClient: MockClient((request) async {
+        captured = request;
+        return _successResponse({'id': 'factory-uuid', 'version': 8});
+      }),
+    );
+
+    await InventoryService(api: api).archiveFactory('factory-uuid', 7);
+
+    expect(captured!.method, 'DELETE');
+    expect(captured!.url.path, '/api/v1/factories/factory-uuid');
+    expect(captured!.headers['If-Match'], '"7"');
+    expect(captured!.headers['Idempotency-Key'], isNotEmpty);
+  });
+
   test('optional reasons are trimmed when included', () async {
     http.Request? captured;
     final api = ApiClient(
@@ -551,7 +644,7 @@ void main() {
                 'section': bodies.last['module'],
                 'createdAt': '2026-09-02T10:00:00.000Z',
               },
-              'meta': {},
+              'meta': {'requestId': 'request-id'},
             }),
             201,
           );
@@ -1291,7 +1384,7 @@ class _TransactionClient extends http.BaseClient {
       final id = purpose == 'BILL' ? 'bill-id' : 'proof-${++_proofUploads}-id';
       return _jsonResponse({
         'data': {'id': id},
-        'meta': {}
+        'meta': {'requestId': 'request-id'}
       });
     }
 

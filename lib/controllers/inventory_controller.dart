@@ -46,7 +46,7 @@ class InventoryController extends ChangeNotifier {
   List<WarehouseFactory> get factories => List.unmodifiable(_factories);
   bool get loading => _loading;
   InventorySection get activeSection => _activeSection;
-  bool get supportsFactoryDeletion => _service.supportsFactoryDeletion;
+  bool get supportsFactoryArchival => _service.supportsFactoryArchival;
 
   void clearSession() {
     _role = null;
@@ -494,23 +494,23 @@ class InventoryController extends ChangeNotifier {
     return true;
   }
 
-  Future<bool> deleteFactory(String id) async {
+  Future<bool> archiveFactory(String id) async {
     if (_role != 'superadmin') return false;
-    if (!_service.supportsFactoryDeletion) {
-      lastErrorMessage = 'Factory deletion is not supported by this server.';
+    if (!_service.supportsFactoryArchival) {
+      lastErrorMessage = 'Factory archival is not supported by this server.';
       return false;
     }
     final factory = _factories.where((item) => item.id == id).firstOrNull;
     if (factory == null) return false;
     lastErrorMessage = null;
     try {
-      await _service.deleteFactory(factory.id, factory.version);
+      await _service.archiveFactory(factory.id, factory.version);
       try {
         _factories = await _service.loadFactories();
       } on ApiException catch (error) {
         _factories = _factories.where((item) => item.id != factory.id).toList();
         lastErrorMessage =
-            'Factory deleted, but refresh failed: ${error.message}';
+            'Factory archived, but refresh failed: ${error.message}';
       }
       notifyListeners();
       return true;
@@ -619,6 +619,7 @@ class InventoryController extends ChangeNotifier {
         request.version,
         reason: reason,
       );
+      await _refreshInventoryAfterRequestDecision();
       return RequestDecision.rejected;
     } on ApiException catch (error) {
       lastErrorMessage = error.message;

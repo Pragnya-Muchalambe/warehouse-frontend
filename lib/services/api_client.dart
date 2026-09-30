@@ -75,7 +75,7 @@ class ApiClient {
   static const _uuid = Uuid();
   static const String _environmentBaseUrl = String.fromEnvironment(
     'WAREHOUSE_API_BASE_URL',
-    defaultValue: 'http://localhost:8000',
+    defaultValue: '',
   );
 
   final http.Client _httpClient;
@@ -92,8 +92,18 @@ class ApiClient {
   }
 
   String get _baseUrl {
-    final base = validateBaseUrl(_configuredBaseUrl);
-    return base.endsWith('/api/v1') ? base : '$base/api/v1';
+    return resolveBaseUrl(_configuredBaseUrl);
+  }
+
+  /// A safe diagnostic for the startup screen. It intentionally contains no
+  /// endpoint, token, or request data.
+  String? get configurationError {
+    try {
+      _baseUrl;
+      return null;
+    } on StateError catch (error) {
+      return error.message.toString();
+    }
   }
 
   @visibleForTesting
@@ -114,6 +124,22 @@ class ApiClient {
       );
     }
     return base;
+  }
+
+  @visibleForTesting
+  static String resolveBaseUrl(String configured, {bool? production}) {
+    final isProduction = production ?? kReleaseMode;
+    final supplied = configured.trim();
+    if (supplied.isEmpty) {
+      if (isProduction) {
+        throw StateError(
+          'WAREHOUSE_API_BASE_URL is required for production builds.',
+        );
+      }
+      return 'http://localhost:8000/api/v1';
+    }
+    final base = validateBaseUrl(supplied, requireHttps: isProduction);
+    return base.endsWith('/api/v1') ? base : '$base/api/v1';
   }
 
   Uri _uri(String path, [Map<String, String>? query]) =>
@@ -170,18 +196,31 @@ class ApiClient {
     );
     final data = envelope['data'];
     final page = envelope['page'];
-    final meta = envelope['meta'];
+    final meta = envelope['meta'] as Map<String, dynamic>;
     if (data is! List || page is! Map<String, dynamic>) {
       throw const ApiException('The server returned an invalid collection.', 0);
     }
+    final limit = page['limit'];
+    final hasMore = page['hasMore'];
+    final nextCursor = page['nextCursor'];
+    if (limit is! int || limit < 1 || limit > 100 || hasMore is! bool) {
+      throw const ApiException(
+          'The server returned invalid pagination metadata.', 0);
+    }
+    if (nextCursor != null && nextCursor is! String) {
+      throw const ApiException(
+          'The server returned invalid pagination metadata.', 0);
+    }
+    if (hasMore && (nextCursor is! String || nextCursor.isEmpty)) {
+      throw const ApiException(
+          'The server returned invalid pagination metadata.', 0);
+    }
     return ApiPage<dynamic>(
       data: data,
-      limit: (page['limit'] as num?)?.toInt() ?? data.length,
-      nextCursor:
-          page['nextCursor'] is String ? page['nextCursor'] as String : null,
-      hasMore: page['hasMore'] == true,
-      requestId:
-          meta is Map<String, dynamic> ? meta['requestId'] as String? : null,
+      limit: limit,
+      nextCursor: nextCursor as String?,
+      hasMore: hasMore,
+      requestId: meta['requestId'] as String,
     );
   }
 
@@ -394,6 +433,17 @@ class ApiClient {
     } catch (_) {
       throw ApiException(
           'The server returned an invalid response.', response.statusCode);
+    }
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final meta = envelope['meta'];
+      if (meta is! Map<String, dynamic> ||
+          meta['requestId'] is! String ||
+          (meta['requestId'] as String).trim().isEmpty) {
+        throw ApiException(
+          'The server returned an invalid response envelope.',
+          response.statusCode,
+        );
+      }
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final errorValue = envelope['error'];

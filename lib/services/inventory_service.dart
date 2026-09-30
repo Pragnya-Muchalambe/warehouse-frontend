@@ -11,7 +11,7 @@ class InventoryService {
 
   final ApiClient _api;
 
-  bool get supportsFactoryDeletion => true;
+  bool get supportsFactoryArchival => true;
 
   Future<Uint8List> downloadFile(String fileId) => _api.downloadFile(fileId);
 
@@ -24,14 +24,14 @@ class InventoryService {
 
   Future<List<TransactionLog>> loadLogs() async {
     final data =
-        await _api.getAll('/transactions', query: {'sort': '-createdAt'});
+        await _api.getAll('/transactions', query: {'sort': 'createdAt,desc'});
     return data
         .map((item) => TransactionLog.fromApi(item as Map<String, dynamic>))
         .toList();
   }
 
   Future<List<AuditLog>> loadAuditLogs() async {
-    final data = await _api.getAll('/logs', query: {'sort': '-occurredAt'});
+    final data = await _api.getAll('/logs', query: {'sort': 'occurredAt,desc'});
     return data
         .map((item) => AuditLog.fromJson(item as Map<String, dynamic>))
         .toList();
@@ -104,7 +104,7 @@ class InventoryService {
     return WarehouseFactory.fromJson(data as Map<String, dynamic>);
   }
 
-  Future<void> deleteFactory(String id, int version) async {
+  Future<void> archiveFactory(String id, int version) async {
     await _api.sendJson(
       'DELETE',
       '/factories/${Uri.encodeComponent(id)}',

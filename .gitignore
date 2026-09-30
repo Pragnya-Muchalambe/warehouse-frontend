@@ -43,3 +43,26 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local development backend — never commit
+/dev_mock_backend/
+
+# Python/test caches
+.pytest_cache/
+**/__pycache__/
+*.pyc
+
+# Android generated/local state and signing material
+/android/.kotlin/
+/android/local.properties
+/android/key.properties
+*.jks
+*.keystore
+
+# Local reports, patches and logs
+*.patch
+*.log
+/FINAL_FRONTEND_CHANGES_REPORT.md
+/FRONTEND_CHANGES_REPORT.md
+/NEW_ISSUES_FIX_REPORT.md
+/backend-developer-api.md

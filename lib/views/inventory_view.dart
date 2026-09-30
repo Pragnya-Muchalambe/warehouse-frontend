@@ -91,7 +91,7 @@ class _InventoryViewState extends State<InventoryView> {
   bool _frequentOnly = false;
   _InventorySort _sort = _InventorySort.recentSearched;
   String? _selectedFactoryId;
-  String? _deletingFactoryId;
+  String? _archivingFactoryId;
 
   @override
   void initState() {
@@ -117,8 +117,8 @@ class _InventoryViewState extends State<InventoryView> {
   bool get _canManage =>
       widget.session.role == 'superadmin' || widget.session.role == 'admin';
 
-  bool get _canDeleteFactory => widget.session.role == 'superadmin';
-  bool get _factoryDeletionSupported => _controller.supportsFactoryDeletion;
+  bool get _canArchiveFactory => widget.session.role == 'superadmin';
+  bool get _factoryArchivalSupported => _controller.supportsFactoryArchival;
 
   List<InventoryItem> get _sectionItems =>
       _controller.itemsInSection(_controller.activeSection);
@@ -506,37 +506,37 @@ class _InventoryViewState extends State<InventoryView> {
     );
   }
 
-  Future<void> _confirmDeleteFactory(WarehouseFactory factory) async {
-    if (!_canDeleteFactory ||
-        !_factoryDeletionSupported ||
-        _deletingFactoryId != null) {
+  Future<void> _confirmArchiveFactory(WarehouseFactory factory) async {
+    if (!_canArchiveFactory ||
+        !_factoryArchivalSupported ||
+        _archivingFactoryId != null) {
       return;
     }
     final factoryId = factory.id;
     final factoryName = factory.name;
     final confirmed = await showDialog<bool>(
           context: context,
-          builder: (_) => _DeleteFactoryDialog(factoryName: factoryName),
+          builder: (_) => _ArchiveFactoryDialog(factoryName: factoryName),
         ) ??
         false;
     if (!confirmed || !mounted) return;
 
     setState(() {
-      _deletingFactoryId = factoryId;
+      _archivingFactoryId = factoryId;
     });
 
-    final deleted = await _controller.deleteFactory(factoryId);
+    final archived = await _controller.archiveFactory(factoryId);
     if (!mounted) return;
     setState(() {
-      _deletingFactoryId = null;
-      if (deleted && _selectedFactoryId == factoryId) {
+      _archivingFactoryId = null;
+      if (archived && _selectedFactoryId == factoryId) {
         _selectedFactoryId = null;
       }
     });
-    if (deleted) widget.onOpenSleeperActions?.call(null);
-    final message = deleted
-        ? _controller.lastErrorMessage ?? 'Factory deleted.'
-        : _controller.lastErrorMessage ?? 'Unable to delete factory.';
+    if (archived) widget.onOpenSleeperActions?.call(null);
+    final message = archived
+        ? _controller.lastErrorMessage ?? 'Factory archived.'
+        : _controller.lastErrorMessage ?? 'Unable to archive factory.';
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
   }
@@ -602,19 +602,19 @@ class _InventoryViewState extends State<InventoryView> {
                             _openAddFactoryMaterialSheet(openFactory),
                       ),
                     if (isFactoryMaterials &&
-                        _canDeleteFactory &&
-                        _factoryDeletionSupported)
+                        _canArchiveFactory &&
+                        _factoryArchivalSupported)
                       BrutalButton(
-                        label: _deletingFactoryId == openFactory.id
-                            ? 'DELETING...'
-                            : 'DELETE FACTORY',
+                        label: _archivingFactoryId == openFactory.id
+                            ? 'ARCHIVING...'
+                            : 'ARCHIVE FACTORY',
                         icon: Icons.delete_outline,
                         iconSize: 16,
                         allowLabelWrap: true,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
-                        onPressed: _deletingFactoryId == null
-                            ? () => _confirmDeleteFactory(openFactory)
+                        onPressed: _archivingFactoryId == null
+                            ? () => _confirmArchiveFactory(openFactory)
                             : null,
                       ),
                     if (isFactoryMaterials)
@@ -779,12 +779,12 @@ class _InventoryViewState extends State<InventoryView> {
         return _FactoryCard(
           factory: factory,
           onTap: () => _enterFactory(factory.id),
-          onDelete: _canDeleteFactory &&
-                  _factoryDeletionSupported &&
-                  _deletingFactoryId == null
-              ? () => _confirmDeleteFactory(factory)
+          onArchive: _canArchiveFactory &&
+                  _factoryArchivalSupported &&
+                  _archivingFactoryId == null
+              ? () => _confirmArchiveFactory(factory)
               : null,
-          deleting: _deletingFactoryId == factory.id,
+          archiving: _archivingFactoryId == factory.id,
         );
       },
     );
@@ -850,16 +850,16 @@ class _InventoryViewState extends State<InventoryView> {
   }
 }
 
-class _DeleteFactoryDialog extends StatefulWidget {
+class _ArchiveFactoryDialog extends StatefulWidget {
   final String factoryName;
 
-  const _DeleteFactoryDialog({required this.factoryName});
+  const _ArchiveFactoryDialog({required this.factoryName});
 
   @override
-  State<_DeleteFactoryDialog> createState() => _DeleteFactoryDialogState();
+  State<_ArchiveFactoryDialog> createState() => _ArchiveFactoryDialogState();
 }
 
-class _DeleteFactoryDialogState extends State<_DeleteFactoryDialog> {
+class _ArchiveFactoryDialogState extends State<_ArchiveFactoryDialog> {
   late final TextEditingController _confirmationController;
   bool _matches = false;
 
@@ -878,7 +878,7 @@ class _DeleteFactoryDialogState extends State<_DeleteFactoryDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Delete Factory'),
+      title: const Text('Archive Factory'),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
         child: SingleChildScrollView(
@@ -887,13 +887,17 @@ class _DeleteFactoryDialogState extends State<_DeleteFactoryDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'This removes ${widget.factoryName} from active local factory lists. Existing transaction, request, and audit records are retained.',
+                'This archives ${widget.factoryName} and removes it from active factory lists. Existing inventory, processed requests, transactions, history, and audit attribution are retained.',
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Pending requests may prevent archival. This action uses the authoritative factory ID; the server may return FACTORY_HAS_ACTIVE_DEPENDENCIES.',
               ),
               const SizedBox(height: 12),
               Text('Type ${widget.factoryName} exactly to confirm.'),
               const SizedBox(height: 8),
               TextField(
-                key: const ValueKey('factory-delete-confirmation'),
+                key: const ValueKey('factory-archive-confirmation'),
                 controller: _confirmationController,
                 autofocus: true,
                 decoration: const InputDecoration(labelText: 'Factory name'),
@@ -912,9 +916,9 @@ class _DeleteFactoryDialogState extends State<_DeleteFactoryDialog> {
           child: const Text('Cancel'),
         ),
         TextButton(
-          key: const ValueKey('confirm-factory-delete'),
+          key: const ValueKey('confirm-factory-archive'),
           onPressed: _matches ? () => Navigator.of(context).pop(true) : null,
-          child: const Text('Delete Factory'),
+          child: const Text('Archive Factory'),
         ),
       ],
     );
@@ -1623,14 +1627,14 @@ class _SectionPicker extends StatelessWidget {
 class _FactoryCard extends StatefulWidget {
   final WarehouseFactory factory;
   final VoidCallback onTap;
-  final VoidCallback? onDelete;
-  final bool deleting;
+  final VoidCallback? onArchive;
+  final bool archiving;
 
   const _FactoryCard({
     required this.factory,
     required this.onTap,
-    this.onDelete,
-    this.deleting = false,
+    this.onArchive,
+    this.archiving = false,
   });
 
   @override
@@ -1700,12 +1704,13 @@ class _FactoryCardState extends State<_FactoryCard> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                if (widget.onDelete != null || widget.deleting) ...[
+                if (widget.onArchive != null || widget.archiving) ...[
                   IconButton(
-                    tooltip:
-                        widget.deleting ? 'Deleting factory' : 'Delete factory',
-                    onPressed: widget.deleting ? null : widget.onDelete,
-                    icon: widget.deleting
+                    tooltip: widget.archiving
+                        ? 'Archiving factory'
+                        : 'Archive factory',
+                    onPressed: widget.archiving ? null : widget.onArchive,
+                    icon: widget.archiving
                         ? const SizedBox(
                             width: 16,
                             height: 16,

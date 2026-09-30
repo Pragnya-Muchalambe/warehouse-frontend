@@ -784,7 +784,7 @@ class LocalInventoryService extends InventoryService {
   final LocalWarehouseStore store;
 
   @override
-  bool get supportsFactoryDeletion => true;
+  bool get supportsFactoryArchival => true;
 
   @override
   Future<List<InventoryItem>> loadInventory() async =>
@@ -833,7 +833,7 @@ class LocalInventoryService extends InventoryService {
   }
 
   @override
-  Future<void> deleteFactory(String id, int version) async {
+  Future<void> archiveFactory(String id, int version) async {
     final index = store.factories.indexWhere((factory) => factory.id == id);
     if (index < 0) throw const ApiException('Factory was not found.', 404);
     if (store.factories[index].version != version) {

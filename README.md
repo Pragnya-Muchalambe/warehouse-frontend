@@ -14,7 +14,7 @@ HttpOnly refresh-cookie adapter and fail clearly in release builds.
 - Image and PDF attachment previews.
 - Viewer request cart, history, and pending-request badge.
 - Admin request decisions and Superadmin undo confirmation.
-- Factory and account deletion controls.
+- Factory archival and account deactivation controls.
 - Transaction correction and scoped audit views.
 - Login, registration, cookie-based session refresh, and in-memory access tokens.
 
@@ -83,7 +83,7 @@ flutter build web
 git diff --check
 ```
 
-The tests include API contract compatibility, cookie-only refresh behavior, concurrent refresh, role restrictions, Depot/Sleeper separation, request history and decisions, deletion controls, attachment previews, multiple-Proof payloads, and test-only local service behavior. The real PDF renderer initialization test is web-only because its platform view requires a browser test environment; non-web tests still cover attachment selection and file-type behavior.
+The tests include API contract compatibility, cookie-only refresh behavior, concurrent refresh, role restrictions, Depot/Sleeper separation, request history and decisions, archival/deactivation controls, attachment previews, multiple-Proof payloads, and test-only local service behavior. The real PDF renderer initialization test is web-only because its platform view requires a browser test environment; non-web tests still cover attachment selection and file-type behavior.
 
 ## Repository Structure
 
@@ -99,7 +99,7 @@ Generated output, local SDK configuration, IDE files, logs, environment files, a
 
 ## Deployment Notes
 
-- Replace the placeholder Android application ID and configure release signing before distribution.
+- Android release is blocked until the project owner supplies a final unique application ID and production signing credentials. Release builds are intentionally unsigned; do not publish them.
 - Use HTTPS for every deployed API origin.
 - Keep refresh cookies `HttpOnly`, `Secure`, and configured with the contract's `SameSite` policy.
 - Do not place secrets in `--dart-define`; Flutter compile-time values are visible to clients.
