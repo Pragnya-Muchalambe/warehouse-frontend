@@ -15,6 +15,55 @@ class RequestBatchException implements Exception {
   });
 }
 
+class PendingRequestCounts {
+  final int total;
+  final int depot;
+  final int sleeper;
+  final Map<String, int> byFactory;
+
+  const PendingRequestCounts({
+    required this.total,
+    required this.depot,
+    required this.sleeper,
+    required this.byFactory,
+  });
+
+  factory PendingRequestCounts.fromJson(Map<String, dynamic> json) {
+    final total = json['total'];
+    final modules = json['byModule'];
+    final factories = json['byFactory'];
+    if (total is! int ||
+        total < 0 ||
+        modules is! Map<String, dynamic> ||
+        modules['DEPOT'] is! int ||
+        modules['SLEEPER'] is! int ||
+        factories is! Map<String, dynamic>) {
+      throw const FormatException('Invalid pending request counts.');
+    }
+    final depot = modules['DEPOT'] as int;
+    final sleeper = modules['SLEEPER'] as int;
+    if (depot < 0 || sleeper < 0) {
+      throw const FormatException('Invalid pending request counts.');
+    }
+    final byFactory = <String, int>{};
+    for (final entry in factories.entries) {
+      final count = entry.value;
+      if (entry.key.isEmpty || count is! int || count < 0) {
+        throw const FormatException('Invalid pending request counts.');
+      }
+      byFactory[entry.key] = count;
+    }
+    return PendingRequestCounts(
+      total: total,
+      depot: depot,
+      sleeper: sleeper,
+      byFactory: Map.unmodifiable(byFactory),
+    );
+  }
+
+  int factory(String factoryId) => byFactory[factoryId] ?? 0;
+}
+
 class RequestService {
   RequestService({ApiClient? api}) : _api = api ?? ApiClient.instance;
 
@@ -30,18 +79,50 @@ class RequestService {
         .toList();
   }
 
+  Future<PendingRequestCounts> loadPendingCounts({
+    String? module,
+    String? factoryId,
+  }) async {
+    final data = await _api.get(
+      '/requests/pending-counts',
+      query: {
+        if (module != null) 'module': module,
+        if (factoryId != null) 'factoryId': factoryId,
+      },
+    );
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException(
+        'The server returned invalid pending request counts.',
+        0,
+      );
+    }
+    try {
+      return PendingRequestCounts.fromJson(data);
+    } on FormatException {
+      throw const ApiException(
+        'The server returned invalid pending request counts.',
+        0,
+      );
+    }
+  }
+
   Future<int> unseenDecisionCount(
     String viewerId,
     String section, {
     String? storageViewerId,
     Iterable<ViewerRequest>? requests,
+    String? factoryId,
   }) async {
     final values = requests ?? await loadRequests();
-    final seenAt =
-        await _lastSeenDecision(storageViewerId ?? viewerId, section);
+    final seenAt = await _lastSeenDecision(
+      storageViewerId ?? viewerId,
+      section,
+      factoryId: factoryId,
+    );
     return values
         .where((request) => request.viewerId == viewerId)
         .where((request) => request.section == section)
+        .where((request) => factoryId == null || request.factoryId == factoryId)
         .map(_decisionInstant)
         .whereType<DateTime>()
         .where((instant) => seenAt == null || instant.isAfter(seenAt))
@@ -53,11 +134,14 @@ class RequestService {
     String section,
     Iterable<ViewerRequest> requests, {
     String? storageViewerId,
+    String? factoryId,
   }) async {
     DateTime? latest;
     for (final request in requests
         .where((request) => request.viewerId == viewerId)
-        .where((request) => request.section == section)) {
+        .where((request) => request.section == section)
+        .where(
+            (request) => factoryId == null || request.factoryId == factoryId)) {
       final instant = _decisionInstant(request);
       if (instant != null && (latest == null || instant.isAfter(latest))) {
         latest = instant;
@@ -66,7 +150,11 @@ class RequestService {
     if (latest == null) return;
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString(
-      _seenDecisionKey(storageViewerId ?? viewerId, section),
+      _seenDecisionKey(
+        storageViewerId ?? viewerId,
+        section,
+        factoryId: factoryId,
+      ),
       latest.toUtc().toIso8601String(),
     );
   }
@@ -79,17 +167,31 @@ class RequestService {
   }
 
   Future<DateTime?> _lastSeenDecision(
-      String storageViewerId, String section) async {
+    String storageViewerId,
+    String section, {
+    String? factoryId,
+  }) async {
     final preferences = await SharedPreferences.getInstance();
     return DateTime.tryParse(
-      preferences.getString(_seenDecisionKey(storageViewerId, section)) ?? '',
+      preferences.getString(_seenDecisionKey(
+            storageViewerId,
+            section,
+            factoryId: factoryId,
+          )) ??
+          '',
     );
   }
 
-  String _seenDecisionKey(String storageViewerId, String section) {
+  String _seenDecisionKey(
+    String storageViewerId,
+    String section, {
+    String? factoryId,
+  }) {
     final identity = Uri.encodeComponent(storageViewerId.trim().toLowerCase());
     final scope = section.trim().toLowerCase();
-    return 'viewer.lastSeenDecision.$identity.$scope';
+    final factory =
+        factoryId == null ? '' : '.${Uri.encodeComponent(factoryId)}';
+    return 'viewer.lastSeenDecision.$identity.$scope$factory';
   }
 
   Future<ViewerRequest> addRequest({

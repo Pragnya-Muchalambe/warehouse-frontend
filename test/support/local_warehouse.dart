@@ -381,11 +381,35 @@ class LocalRequestService extends RequestService {
       List.unmodifiable(store.requests);
 
   @override
+  Future<PendingRequestCounts> loadPendingCounts({
+    String? module,
+    String? factoryId,
+  }) async {
+    final pending = store.requests.where((request) => request.isPending);
+    final depot = pending.where((request) => request.section == 'Depot').length;
+    final sleeper =
+        pending.where((request) => request.section == 'Sleeper').length;
+    final byFactory = <String, int>{};
+    for (final request
+        in pending.where((request) => request.factoryId != null)) {
+      byFactory.update(request.factoryId!, (count) => count + 1,
+          ifAbsent: () => 1);
+    }
+    return PendingRequestCounts(
+      total: depot + sleeper,
+      depot: depot,
+      sleeper: sleeper,
+      byFactory: byFactory,
+    );
+  }
+
+  @override
   Future<int> unseenDecisionCount(
     String viewerId,
     String section, {
     String? storageViewerId,
     Iterable<ViewerRequest>? requests,
+    String? factoryId,
   }) async {
     final seen = store.seenDecisions[viewerId] ?? const <String>{};
     return store.requests.where((request) {
@@ -393,6 +417,7 @@ class LocalRequestService extends RequestService {
           request.status == 'Accepted' || request.status == 'Rejected';
       return request.viewerId == viewerId &&
           request.section == section &&
+          (factoryId == null || request.factoryId == factoryId) &&
           decided &&
           !seen.contains('${request.id}:${request.version}');
     }).length;
@@ -404,11 +429,13 @@ class LocalRequestService extends RequestService {
     String section,
     Iterable<ViewerRequest> requests, {
     String? storageViewerId,
+    String? factoryId,
   }) async {
     final seen = store.seenDecisions.putIfAbsent(viewerId, () => <String>{});
     for (final request in requests) {
       if (request.viewerId == viewerId &&
           request.section == section &&
+          (factoryId == null || request.factoryId == factoryId) &&
           (request.status == 'Accepted' || request.status == 'Rejected')) {
         seen.add('${request.id}:${request.version}');
       }

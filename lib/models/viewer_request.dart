@@ -71,7 +71,7 @@ class RequestHistoryEntry {
           : '',
       actorName:
           actor is Map<String, dynamic> ? actor['name'] as String? ?? '' : '',
-      at: DateTime.tryParse(json['at'] as String? ?? '') ?? DateTime.now(),
+      at: _requiredTimestamp(json['at'], 'history.at'),
       reason: json['reason'] as String?,
     );
   }
@@ -235,8 +235,7 @@ class ViewerRequest {
       materialNumber: json['materialNumber'] as String?,
       itemName: json['itemName'] as String? ?? '',
       quantity: (json['quantity'] as num?)?.toInt() ?? 0,
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-          DateTime.now(),
+      createdAt: _requiredTimestamp(json['createdAt'], 'createdAt'),
       section:
           (json['module'] as String? ?? json['section'] as String? ?? 'DEPOT')
                       .toLowerCase() ==
@@ -247,12 +246,12 @@ class ViewerRequest {
       factoryName: json['factoryName'] as String?,
       status: _uiRequestStatus(json['status'] as String?),
       decisionBy: json['decisionBy'] as String?,
-      decisionAt: DateTime.tryParse(json['decisionAt'] as String? ?? ''),
+      decisionAt: _optionalTimestamp(json['decisionAt'], 'decisionAt'),
       history: (json['history'] as List? ?? [])
           .map((e) => RequestHistoryEntry.fromJson(e as Map<String, dynamic>))
           .toList(),
       version: (json['version'] as num?)?.toInt() ?? 1,
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? ''),
+      updatedAt: _optionalTimestamp(json['updatedAt'], 'updatedAt'),
       relatedTransactionId: json['relatedTransactionId'] as String?,
       billAttachment: switch (json['billAttachment']) {
         final Map<String, dynamic> bill => TransactionAttachment(
@@ -269,6 +268,23 @@ class ViewerRequest {
       },
     );
   }
+}
+
+DateTime _requiredTimestamp(Object? value, String field) {
+  final parsed = value is String ? DateTime.tryParse(value) : null;
+  if (parsed == null || !parsed.isUtc) {
+    throw FormatException('Invalid required timestamp: $field');
+  }
+  return parsed;
+}
+
+DateTime? _optionalTimestamp(Object? value, String field) {
+  if (value == null) return null;
+  final parsed = value is String ? DateTime.tryParse(value) : null;
+  if (parsed == null || !parsed.isUtc) {
+    throw FormatException('Invalid optional timestamp: $field');
+  }
+  return parsed;
 }
 
 String _uiRequestStatus(String? status) => switch (status?.toUpperCase()) {

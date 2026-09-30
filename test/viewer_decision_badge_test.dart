@@ -182,12 +182,29 @@ void main() {
       0,
     );
   });
+
+  testWidgets('Viewer detects a decision through shell polling',
+      (tester) async {
+    final backend = _DecisionBackend([]);
+    await _pumpShell(
+      tester,
+      backend,
+      refreshInterval: const Duration(minutes: 1),
+    );
+    expect(
+        find.byKey(const ValueKey('viewer-depot-history-badge')), findsNothing);
+
+    backend.requests.add(_requestJson(id: 'polled', status: 'ACCEPTED'));
+    await tester.pump(const Duration(minutes: 1));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('viewer-depot-history-badge')),
+        findsOneWidget);
+  });
 }
 
-Future<void> _pumpShell(
-  WidgetTester tester,
-  _DecisionBackend backend,
-) async {
+Future<void> _pumpShell(WidgetTester tester, _DecisionBackend backend,
+    {Duration refreshInterval = const Duration(seconds: 45)}) async {
   final controller = InventoryController(
     inventoryService: FakeInventoryService(),
   );
@@ -202,6 +219,7 @@ Future<void> _pumpShell(
       session: _viewerA,
       inventoryController: controller,
       requestService: service,
+      refreshInterval: refreshInterval,
       onLogout: () {},
     ),
   ));

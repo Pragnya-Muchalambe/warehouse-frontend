@@ -148,9 +148,11 @@ class AuthService {
 
   Future<void> _clearTokens() async {
     _api.accessToken = null;
+    _api.clearPendingOperationKeys();
   }
 
   Future<void> _clearTokensSafely() async {
     _api.accessToken = null;
+    _api.clearPendingOperationKeys();
   }
 }

@@ -67,13 +67,30 @@ class AccountRequest {
       name: json['name'] as String? ?? '',
       requestedId: json['requestedId'] as String? ?? '',
       role: json['role'] as String? ?? 'viewer',
-      submittedAt: DateTime.tryParse(json['submittedAt'] as String? ?? '') ??
-          DateTime.now(),
+      submittedAt:
+          _requiredAccountTimestamp(json['submittedAt'], 'submittedAt'),
       status: _uiAccountStatus(json['status'] as String?),
       decisionBy: json['decisionBy'] as String?,
-      decisionAt: DateTime.tryParse(json['decisionAt'] as String? ?? ''),
+      decisionAt: _optionalAccountTimestamp(json['decisionAt'], 'decisionAt'),
       version: (json['version'] as num?)?.toInt() ?? 1,
     );
+  }
+
+  static DateTime _requiredAccountTimestamp(Object? value, String field) {
+    final parsed = value is String ? DateTime.tryParse(value) : null;
+    if (parsed == null || !parsed.isUtc) {
+      throw FormatException('Invalid required timestamp: $field');
+    }
+    return parsed;
+  }
+
+  static DateTime? _optionalAccountTimestamp(Object? value, String field) {
+    if (value == null) return null;
+    final parsed = value is String ? DateTime.tryParse(value) : null;
+    if (parsed == null || !parsed.isUtc) {
+      throw FormatException('Invalid optional timestamp: $field');
+    }
+    return parsed;
   }
 }
 

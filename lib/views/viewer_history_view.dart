@@ -72,6 +72,7 @@ class _ViewerHistoryViewState extends State<ViewerHistoryView> {
           storageViewerId: widget.session.accountId.trim().isNotEmpty
               ? widget.session.accountId
               : widget.session.id,
+          factoryId: widget.factoryId,
         );
         widget.onLoaded?.call();
       }

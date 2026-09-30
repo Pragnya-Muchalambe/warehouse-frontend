@@ -261,6 +261,92 @@ void main() {
     expect(keys.first, keys.last);
   });
 
+  test('timeout retains a mutation idempotency key', () async {
+    final keys = <String?>[];
+    var calls = 0;
+    final api = ApiClient(
+      requestTimeout: const Duration(milliseconds: 1),
+      httpClient: MockClient((request) async {
+        keys.add(request.headers['Idempotency-Key']);
+        calls++;
+        if (calls == 1) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        return _successResponse({'id': 'resource-id'});
+      }),
+    );
+
+    await expectLater(
+      api.sendJson('POST', '/inventory', body: {'id': 'timeout'}),
+      throwsA(isA<ApiException>()),
+    );
+    await api.sendJson('POST', '/inventory', body: {'id': 'timeout'});
+    expect(keys.first, keys.last);
+  });
+
+  test('502 503 and 504 retain mutation idempotency keys', () async {
+    for (final status in [502, 503, 504]) {
+      final keys = <String?>[];
+      var calls = 0;
+      final api = ApiClient(httpClient: MockClient((request) async {
+        keys.add(request.headers['Idempotency-Key']);
+        calls++;
+        return calls == 1
+            ? _apiErrorResponse(status, retryable: false)
+            : _successResponse({'id': 'resource-id'});
+      }));
+
+      await expectLater(
+        api.sendJson('POST', '/inventory', body: {'id': 'status-$status'}),
+        throwsA(isA<ApiException>()),
+      );
+      await api.sendJson('POST', '/inventory', body: {'id': 'status-$status'});
+      expect(keys.first, keys.last, reason: 'HTTP $status must reuse its key');
+    }
+  });
+
+  test('definitive HTTP failures discard mutation idempotency keys', () async {
+    for (final status in [400, 403, 409]) {
+      final keys = <String?>[];
+      final api = ApiClient(httpClient: MockClient((request) async {
+        keys.add(request.headers['Idempotency-Key']);
+        return _apiErrorResponse(status, retryable: false);
+      }));
+
+      for (var attempt = 0; attempt < 2; attempt++) {
+        await expectLater(
+          api.sendJson('POST', '/inventory', body: {'id': 'status-$status'}),
+          throwsA(isA<ApiException>()),
+        );
+      }
+      expect(keys.first, isNot(keys.last),
+          reason: 'HTTP $status must discard its key');
+    }
+  });
+
+  test('retryable upload failure reuses its idempotency key', () async {
+    final keys = <String?>[];
+    var calls = 0;
+    final api = ApiClient(httpClient: MockClient((request) async {
+      keys.add(request.headers['Idempotency-Key']);
+      calls++;
+      return calls == 1
+          ? _apiErrorResponse(503, retryable: false)
+          : _successResponse({'id': 'file-id'});
+    }));
+    final bytes = Uint8List.fromList('%PDF-1.7'.codeUnits);
+
+    await expectLater(
+      api.uploadFile(purpose: 'BILL', fileName: 'bill.pdf', bytes: bytes),
+      throwsA(isA<ApiException>()),
+    );
+    expect(
+      await api.uploadFile(purpose: 'BILL', fileName: 'bill.pdf', bytes: bytes),
+      'file-id',
+    );
+    expect(keys.first, keys.last);
+  });
+
   test('non-expired unauthorized responses are not replayed', () async {
     var calls = 0;
     var refreshes = 0;
@@ -1120,6 +1206,28 @@ class _DecisionRequestService extends RequestService {
     return request;
   }
 }
+
+http.Response _successResponse(Object? data) => http.Response(
+      jsonEncode({
+        'data': data,
+        'meta': {'requestId': 'request-id'},
+      }),
+      200,
+    );
+
+http.Response _apiErrorResponse(int status, {required bool retryable}) =>
+    http.Response(
+      jsonEncode({
+        'error': {
+          'code': 'ERROR_$status',
+          'message': 'Request failed.',
+          'details': const [],
+          'retryable': retryable,
+        },
+        'meta': {'requestId': 'request-id'},
+      }),
+      status,
+    );
 
 class _PartiallyFailingLoadService extends InventoryService {
   @override

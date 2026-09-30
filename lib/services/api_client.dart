@@ -31,6 +31,8 @@ class ApiException implements Exception {
   });
 
   bool get isVersionConflict => statusCode == 412 || code == 'VERSION_CONFLICT';
+  bool get isRetryableFailure =>
+      retryable || const {502, 503, 504}.contains(statusCode);
 
   @override
   String toString() => message;
@@ -61,9 +63,13 @@ class ApiPage<T> {
 }
 
 class ApiClient {
-  ApiClient({http.Client? httpClient, String? baseUrl})
-      : _httpClient = httpClient ?? createCredentialedHttpClient(),
-        _configuredBaseUrl = baseUrl ?? _environmentBaseUrl;
+  ApiClient({
+    http.Client? httpClient,
+    String? baseUrl,
+    Duration requestTimeout = const Duration(seconds: 30),
+  })  : _httpClient = httpClient ?? createCredentialedHttpClient(),
+        _configuredBaseUrl = baseUrl ?? _environmentBaseUrl,
+        _requestTimeout = requestTimeout;
 
   static final instance = ApiClient();
   static const _uuid = Uuid();
@@ -76,9 +82,14 @@ class ApiClient {
   final String _configuredBaseUrl;
   final Map<String, String> _pendingIdempotencyKeys = {};
   final Map<String, String> _pendingUploadIdempotencyKeys = {};
-  static const _requestTimeout = Duration(seconds: 30);
+  final Duration _requestTimeout;
   String? accessToken;
   Future<bool> Function()? refreshAccessToken;
+
+  void clearPendingOperationKeys() {
+    _pendingIdempotencyKeys.clear();
+    _pendingUploadIdempotencyKeys.clear();
+  }
 
   String get _baseUrl {
     final base = validateBaseUrl(_configuredBaseUrl);
@@ -206,7 +217,7 @@ class ApiClient {
       _pendingIdempotencyKeys.remove(operationSignature);
       return result;
     } on ApiException catch (error) {
-      if (error.statusCode != 0 || !error.retryable) {
+      if (!error.isRetryableFailure) {
         _pendingIdempotencyKeys.remove(operationSignature);
       }
       rethrow;
@@ -254,7 +265,7 @@ class ApiClient {
       _pendingUploadIdempotencyKeys.remove(uploadSignature);
       return data['id'] as String;
     } on ApiException catch (error) {
-      if (error.statusCode != 0 || !error.retryable) {
+      if (!error.isRetryableFailure) {
         _pendingUploadIdempotencyKeys.remove(uploadSignature);
       }
       rethrow;

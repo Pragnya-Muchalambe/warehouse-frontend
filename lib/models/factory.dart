@@ -122,6 +122,7 @@ class WarehouseFactory {
   final String id;
   final String name;
   final String location;
+  final String status;
   final List<FactoryMaterial> materials;
   final int version;
   final int materialCount;
@@ -132,6 +133,7 @@ class WarehouseFactory {
     required this.id,
     required this.name,
     required this.location,
+    this.status = 'ACTIVE',
     this.materials = const [],
     this.version = 1,
     this.materialCount = 0,
@@ -143,6 +145,7 @@ class WarehouseFactory {
     String? id,
     String? name,
     String? location,
+    String? status,
     List<FactoryMaterial>? materials,
     int? version,
     int? materialCount,
@@ -153,6 +156,7 @@ class WarehouseFactory {
       id: id ?? this.id,
       name: name ?? this.name,
       location: location ?? this.location,
+      status: status ?? this.status,
       materials: materials ?? this.materials,
       version: version ?? this.version,
       materialCount: materialCount ?? this.materialCount,
@@ -165,6 +169,7 @@ class WarehouseFactory {
         'id': id,
         'name': name,
         'location': location,
+        'status': status,
         'materials': materials.map((m) => m.toJson()).toList(),
         'version': version,
         'materialCount': materialCount,
@@ -181,6 +186,7 @@ class WarehouseFactory {
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '',
       location: json['location'] as String? ?? '',
+      status: json['status'] as String? ?? 'ACTIVE',
       materials: (json['materials'] as List? ?? [])
           .map((e) => FactoryMaterial.fromJson(e as Map<String, dynamic>))
           .toList(),

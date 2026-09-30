@@ -44,14 +44,27 @@ class InventoryService {
 
   Future<List<WarehouseFactory>> loadFactories() async {
     final data = await _api.getAll('/factories');
-    final factories = <WarehouseFactory>[];
-    for (final raw in data.cast<Map<String, dynamic>>()) {
-      final factory = WarehouseFactory.fromJson(raw);
-      factories.add(
-        factory.copyWith(materials: await loadFactoryMaterials(factory.id)),
-      );
+    final factories = data
+        .cast<Map<String, dynamic>>()
+        .map(WarehouseFactory.fromJson)
+        .where((factory) => factory.status.toUpperCase() != 'ARCHIVED')
+        .toList();
+    final hydrated = List<WarehouseFactory?>.filled(factories.length, null);
+    var nextIndex = 0;
+
+    Future<void> worker() async {
+      while (nextIndex < factories.length) {
+        final index = nextIndex++;
+        final factory = factories[index];
+        hydrated[index] = factory.copyWith(
+          materials: await loadFactoryMaterials(factory.id),
+        );
+      }
     }
-    return factories;
+
+    final workerCount = factories.length < 4 ? factories.length : 4;
+    await Future.wait(List.generate(workerCount, (_) => worker()));
+    return hydrated.cast<WarehouseFactory>();
   }
 
   Future<List<FactoryMaterial>> loadFactoryMaterials(String factoryId) async {

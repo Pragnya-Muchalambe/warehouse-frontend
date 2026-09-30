@@ -1,9 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../controllers/inventory_controller.dart';
 import '../models/inventory_item.dart';
 import '../models/account_request.dart';
-import '../models/viewer_request.dart';
 import '../presentation.dart';
 import '../services/auth_service.dart';
 import '../services/account_request_service.dart';
@@ -43,6 +44,7 @@ class SuperadminShell extends StatefulWidget {
   final AccountRequestService? accountRequestService;
   final UserAccountService? userAccountService;
   final TransactionFilePicker transactionFilePicker;
+  final Duration refreshInterval;
 
   const SuperadminShell({
     super.key,
@@ -53,13 +55,15 @@ class SuperadminShell extends StatefulWidget {
     this.accountRequestService,
     this.userAccountService,
     this.transactionFilePicker = const PlatformTransactionFilePicker(),
+    this.refreshInterval = const Duration(seconds: 45),
   });
 
   @override
   State<SuperadminShell> createState() => _SuperadminShellState();
 }
 
-class _SuperadminShellState extends State<SuperadminShell> {
+class _SuperadminShellState extends State<SuperadminShell>
+    with WidgetsBindingObserver {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   _SuperadminPage _page = _SuperadminPage.inventory;
   String? _sleeperFactoryId;
@@ -69,6 +73,9 @@ class _SuperadminShellState extends State<SuperadminShell> {
   int _sleeperPendingCount = 0;
   int _permissionPendingCount = 0;
   int _countEpoch = 0;
+  Timer? _refreshTimer;
+  bool _refreshInFlight = false;
+  bool _foreground = true;
 
   bool get _hasPendingNotifications =>
       _depotPendingCount > 0 ||
@@ -83,36 +90,59 @@ class _SuperadminShellState extends State<SuperadminShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _requestService = widget.requestService ?? RequestService();
     _accountRequestService =
         widget.accountRequestService ?? AccountRequestService();
     _refreshPendingCounts();
+    _refreshTimer = Timer.periodic(widget.refreshInterval, (_) {
+      if (_foreground) _refreshPendingCounts();
+    });
   }
 
   Future<void> _refreshPendingCounts() async {
+    if (_refreshInFlight) return;
+    _refreshInFlight = true;
     final epoch = ++_countEpoch;
     try {
       final results = await Future.wait([
-        _requestService.loadRequests(),
+        _requestService.loadPendingCounts(),
         _accountRequestService.loadRequests(),
       ]);
       if (!mounted || epoch != _countEpoch) return;
-      final requests = results[0] as List<ViewerRequest>;
+      final counts = results[0] as PendingRequestCounts;
       final permissions = results[1] as List<AccountRequest>;
       setState(() {
-        _depotPendingCount = requests
-            .where((request) => request.section == 'Depot' && request.isPending)
-            .length;
-        _sleeperPendingCount = requests
-            .where(
-                (request) => request.section == 'Sleeper' && request.isPending)
-            .length;
+        _depotPendingCount = counts.depot;
+        _sleeperPendingCount = _sleeperFactoryId == null
+            ? counts.sleeper
+            : counts.factory(_sleeperFactoryId!);
         _permissionPendingCount =
             permissions.where((request) => request.isPending).length;
       });
     } catch (_) {
       // Keep the last authoritative counts when refresh fails.
+    } finally {
+      _refreshInFlight = false;
     }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (_foreground) _refreshPendingCounts();
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  void _setSleeperFactory(String? factoryId) {
+    setState(() => _sleeperFactoryId = factoryId);
+    _refreshPendingCounts();
   }
 
   String get _pageLabel {
@@ -151,7 +181,6 @@ class _SuperadminShellState extends State<SuperadminShell> {
       };
 
   void _go(_SuperadminPage page) {
-    _refreshPendingCounts();
     setState(() {
       _page = page;
       if (page == _SuperadminPage.inventory) {
@@ -171,6 +200,7 @@ class _SuperadminShellState extends State<SuperadminShell> {
         );
       }
     });
+    _refreshPendingCounts();
     Navigator.of(context).pop();
   }
 
@@ -191,8 +221,7 @@ class _SuperadminShellState extends State<SuperadminShell> {
           session: widget.session,
           initialSection: InventorySection.sleeper,
           showSectionTabs: false,
-          onOpenSleeperActions: (factoryId) =>
-              setState(() => _sleeperFactoryId = factoryId),
+          onOpenSleeperActions: _setSleeperFactory,
         );
       case _SuperadminPage.actions:
         return TransactionsView(

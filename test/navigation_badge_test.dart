@@ -4,6 +4,7 @@ import 'package:warehouse_poc/controllers/inventory_controller.dart';
 import 'package:warehouse_poc/models/account_request.dart';
 import 'package:warehouse_poc/models/viewer_request.dart';
 import 'package:warehouse_poc/services/account_request_service.dart';
+import 'package:warehouse_poc/services/api_client.dart';
 import 'package:warehouse_poc/services/auth_service.dart';
 import 'package:warehouse_poc/services/request_service.dart';
 import 'package:warehouse_poc/theme.dart';
@@ -14,10 +15,34 @@ import 'fake_inventory_service.dart';
 
 class _Requests extends RequestService {
   final List<ViewerRequest> requests;
+  int countCalls = 0;
+  bool failCounts = false;
   _Requests(this.requests);
 
   @override
   Future<List<ViewerRequest>> loadRequests() async => requests;
+
+  @override
+  Future<PendingRequestCounts> loadPendingCounts({
+    String? module,
+    String? factoryId,
+  }) async {
+    countCalls++;
+    if (failCounts) throw const ApiException('offline', 0, retryable: true);
+    final pending = requests.where((request) => request.isPending);
+    final byFactory = <String, int>{};
+    for (final request
+        in pending.where((request) => request.factoryId != null)) {
+      byFactory.update(request.factoryId!, (value) => value + 1,
+          ifAbsent: () => 1);
+    }
+    return PendingRequestCounts(
+      total: pending.length,
+      depot: pending.where((request) => request.section == 'Depot').length,
+      sleeper: pending.where((request) => request.section == 'Sleeper').length,
+      byFactory: byFactory,
+    );
+  }
 }
 
 class _Permissions extends AccountRequestService {
@@ -167,5 +192,44 @@ void main() {
 
     expect(find.byKey(const ValueKey('hamburger-notification-dot')),
         findsOneWidget);
+  });
+
+  testWidgets('admin polls counts, pauses in background, and stops on dispose',
+      (tester) async {
+    final controller = await _controller('admin');
+    addTearDown(controller.dispose);
+    final service = _Requests([_request('1', 'Depot')]);
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(),
+      home: AdminShell(
+        session: _admin,
+        inventoryController: controller,
+        requestService: service,
+        refreshInterval: const Duration(minutes: 1),
+        onLogout: () {},
+      ),
+    ));
+    await tester.pump();
+    expect(service.countCalls, 1);
+    expect(find.byKey(const ValueKey('requests-footer-badge')), findsOneWidget);
+
+    service.failCounts = true;
+    await tester.pump(const Duration(minutes: 1));
+    expect(service.countCalls, 2);
+    expect(find.byKey(const ValueKey('requests-footer-badge')), findsOneWidget);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(minutes: 1));
+    expect(service.countCalls, 2);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(service.countCalls, 3);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(minutes: 1));
+    expect(service.countCalls, 3);
   });
 }

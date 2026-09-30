@@ -1,12 +1,20 @@
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 bool get platformCookiesEnabled => Platform.isAndroid;
 
-http.Client createPlatformHttpClient() =>
-    Platform.isAndroid ? AndroidCookieHttpClient() : http.Client();
+http.Client createPlatformHttpClient() {
+  if (Platform.isAndroid) return AndroidCookieHttpClient();
+  if (kReleaseMode) {
+    throw UnsupportedError(
+      'Release authentication is supported only on Web and Android.',
+    );
+  }
+  return http.Client();
+}
 
 class AndroidCookieHttpClient extends http.BaseClient {
   static const _channel = MethodChannel('warehouse/http');

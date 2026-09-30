@@ -2,6 +2,10 @@
 
 Flutter frontend for railway warehouse inventory across Depot and Sleeper/factory scopes. It connects to the HTTP API defined in [`api.md`](api.md); production startup does not use the test-only local warehouse services.
 
+Production authentication is supported on Web and Android. iOS and other
+native desktop targets do not currently provide the required persistent
+HttpOnly refresh-cookie adapter and fail clearly in release builds.
+
 ## Features
 
 - Viewer, Admin, and Superadmin role-specific navigation and controls.
@@ -31,6 +35,8 @@ Authentication follows the cookie-only refresh contract in `api.md`:
 - Refresh and logout do not read or send a refresh token in JSON.
 - Browser requests enable credentials.
 - Android requests use the native persistent cookie store.
+- iOS and desktop release builds are unsupported until they have an equivalent
+  native HttpOnly cookie transport; refresh tokens are never exposed to Dart.
 - Concurrent expired-token requests share one in-flight refresh operation.
 
 The API must allow credentialed CORS requests from the deployed web origin. Android networking requires the Internet permission already declared in the application manifest.

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../controllers/inventory_controller.dart';
@@ -33,6 +35,7 @@ class AdminShell extends StatefulWidget {
   final VoidCallback onLogout;
   final RequestService? requestService;
   final TransactionFilePicker transactionFilePicker;
+  final Duration refreshInterval;
 
   const AdminShell({
     super.key,
@@ -41,13 +44,14 @@ class AdminShell extends StatefulWidget {
     required this.onLogout,
     this.requestService,
     this.transactionFilePicker = const PlatformTransactionFilePicker(),
+    this.refreshInterval = const Duration(seconds: 45),
   });
 
   @override
   State<AdminShell> createState() => _AdminShellState();
 }
 
-class _AdminShellState extends State<AdminShell> {
+class _AdminShellState extends State<AdminShell> with WidgetsBindingObserver {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   _AdminPage _page = _AdminPage.inventory;
   String? _sleeperFactoryId;
@@ -55,6 +59,9 @@ class _AdminShellState extends State<AdminShell> {
   int _depotPendingRequests = 0;
   int _sleeperPendingRequests = 0;
   int _pendingRefreshEpoch = 0;
+  Timer? _refreshTimer;
+  bool _refreshInFlight = false;
+  bool _foreground = true;
 
   bool get _hasPendingNotifications =>
       _depotPendingRequests > 0 || _sleeperPendingRequests > 0;
@@ -67,25 +74,50 @@ class _AdminShellState extends State<AdminShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _requestService = widget.requestService ?? RequestService();
     _refreshPendingCounts();
+    _refreshTimer = Timer.periodic(widget.refreshInterval, (_) {
+      if (_foreground) _refreshPendingCounts();
+    });
   }
 
   Future<void> _refreshPendingCounts() async {
+    if (_refreshInFlight) return;
+    _refreshInFlight = true;
     final epoch = ++_pendingRefreshEpoch;
     try {
-      final requests = await _requestService.loadRequests();
+      final counts = await _requestService.loadPendingCounts();
       if (!mounted || epoch != _pendingRefreshEpoch) return;
       setState(() {
-        _depotPendingRequests = requests
-            .where((request) => request.section == 'Depot' && request.isPending)
-            .length;
-        _sleeperPendingRequests = requests
-            .where(
-                (request) => request.section == 'Sleeper' && request.isPending)
-            .length;
+        _depotPendingRequests = counts.depot;
+        _sleeperPendingRequests = _sleeperFactoryId == null
+            ? counts.sleeper
+            : counts.factory(_sleeperFactoryId!);
       });
-    } catch (_) {}
+    } catch (_) {
+      // Preserve the last valid count during background refresh failures.
+    } finally {
+      _refreshInFlight = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (_foreground) _refreshPendingCounts();
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  void _setSleeperFactory(String? factoryId) {
+    setState(() => _sleeperFactoryId = factoryId);
+    _refreshPendingCounts();
   }
 
   String get _pageLabel {
@@ -119,7 +151,6 @@ class _AdminShellState extends State<AdminShell> {
       };
 
   void _go(_AdminPage page) {
-    _refreshPendingCounts();
     setState(() {
       _page = page;
       if (page == _AdminPage.inventory) {
@@ -139,6 +170,7 @@ class _AdminShellState extends State<AdminShell> {
         );
       }
     });
+    _refreshPendingCounts();
     Navigator.of(context).pop();
   }
 
@@ -159,8 +191,7 @@ class _AdminShellState extends State<AdminShell> {
           session: widget.session,
           initialSection: InventorySection.sleeper,
           showSectionTabs: false,
-          onOpenSleeperActions: (factoryId) =>
-              setState(() => _sleeperFactoryId = factoryId),
+          onOpenSleeperActions: _setSleeperFactory,
         );
       case _AdminPage.actions:
         return TransactionsView(

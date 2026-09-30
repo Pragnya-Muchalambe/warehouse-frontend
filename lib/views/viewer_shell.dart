@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../controllers/inventory_controller.dart';
@@ -27,6 +29,7 @@ class ViewerShell extends StatefulWidget {
   final InventoryController inventoryController;
   final VoidCallback onLogout;
   final RequestService? requestService;
+  final Duration refreshInterval;
 
   const ViewerShell({
     super.key,
@@ -34,6 +37,7 @@ class ViewerShell extends StatefulWidget {
     required this.inventoryController,
     required this.onLogout,
     this.requestService,
+    this.refreshInterval = const Duration(seconds: 45),
   });
 
   @override
@@ -48,17 +52,24 @@ class _ViewerShellState extends State<ViewerShell> with WidgetsBindingObserver {
   String? _sleeperHistoryFactoryId;
   int _requestRefreshEpoch = 0;
   int _badgeRefreshEpoch = 0;
+  Timer? _refreshTimer;
+  bool _refreshInFlight = false;
+  bool _foreground = true;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _refreshHistoryBadges();
+    _refreshTimer = Timer.periodic(widget.refreshInterval, (_) {
+      if (_foreground) _refreshHistoryBadges();
+    });
   }
 
   Future<void> _refreshHistoryBadges() async {
     final service = widget.requestService;
-    if (service == null) return;
+    if (service == null || _refreshInFlight) return;
+    _refreshInFlight = true;
     final epoch = ++_badgeRefreshEpoch;
     try {
       final requests = await service.loadRequests();
@@ -77,6 +88,7 @@ class _ViewerShellState extends State<ViewerShell> with WidgetsBindingObserver {
           'Sleeper',
           storageViewerId: storageViewerId,
           requests: requests,
+          factoryId: _sleeperHistoryFactoryId,
         ),
       ]);
       if (!mounted || epoch != _badgeRefreshEpoch) return;
@@ -86,12 +98,15 @@ class _ViewerShellState extends State<ViewerShell> with WidgetsBindingObserver {
       });
     } catch (_) {
       // Keep the last known badge state when a background refresh fails.
+    } finally {
+      _refreshInFlight = false;
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) return;
     if (_page == _ViewerPage.requests ||
         _page == _ViewerPage.history ||
         _page == _ViewerPage.sleeperRequests ||
@@ -103,6 +118,7 @@ class _ViewerShellState extends State<ViewerShell> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

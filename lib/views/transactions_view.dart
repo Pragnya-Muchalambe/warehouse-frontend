@@ -99,7 +99,6 @@ class _TransactionsViewState extends State<TransactionsView> {
   bool _submitting = false;
   bool _pickingBill = false;
   bool _pickingProof = false;
-  TransactionLog? _createdTransaction;
   late final RequestService _requestService;
   List<ViewerRequest> _acceptedRequests = const [];
   final Set<String> _sourceRequestIds = {};
@@ -682,7 +681,6 @@ class _TransactionsViewState extends State<TransactionsView> {
     }
 
     setState(() => _submitting = true);
-    final previousIds = widget.controller.logs.map((log) => log.id).toSet();
     try {
       await widget.addTransaction(
         type: isIncoming ? LogType.incoming.label : LogType.dispatch.label,
@@ -732,12 +730,8 @@ class _TransactionsViewState extends State<TransactionsView> {
       return;
     }
     if (!mounted) return;
-    final created = widget.controller.logs
-        .where((log) => !previousIds.contains(log.id))
-        .firstOrNull;
     _resetForm();
-    setState(() => _createdTransaction = created);
-    _showMessage('Transaction completed successfully.');
+    _showMessage('Transaction created successfully.');
   }
 
   String _isoDate(DateTime date) =>
@@ -762,36 +756,6 @@ class _TransactionsViewState extends State<TransactionsView> {
 
   @override
   Widget build(BuildContext context) {
-    final created = _createdTransaction;
-    if (created != null) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: MaxWidth(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'TRANSACTION CREATED',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: kInk,
-                ),
-              ),
-              const SizedBox(height: 16),
-              ActionRecordCard(
-                log: created,
-                downloadFile: widget.controller.downloadFile,
-              ),
-              BrutalButton(
-                label: 'BACK TO ACTIONS',
-                onPressed: () => setState(() => _createdTransaction = null),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
     return Column(
       children: [
         _buildHeader(),
