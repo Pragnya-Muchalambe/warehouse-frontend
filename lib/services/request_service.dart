@@ -35,15 +35,24 @@ class PendingRequestCounts {
     if (total is! int ||
         total < 0 ||
         modules is! Map<String, dynamic> ||
-        modules['DEPOT'] is! int ||
-        modules['SLEEPER'] is! int ||
         factories is! Map<String, dynamic>) {
       throw const FormatException('Invalid pending request counts.');
     }
-    final depot = modules['DEPOT'] as int;
-    final sleeper = modules['SLEEPER'] as int;
-    if (depot < 0 || sleeper < 0) {
-      throw const FormatException('Invalid pending request counts.');
+    var depot = 0;
+    var sleeper = 0;
+    for (final entry in modules.entries) {
+      final count = entry.value;
+      if (count is! int || count < 0) {
+        throw const FormatException('Invalid pending request counts.');
+      }
+      switch (entry.key) {
+        case 'DEPOT':
+          depot = count;
+        case 'SLEEPER':
+          sleeper = count;
+        default:
+          throw const FormatException('Invalid pending request counts.');
+      }
     }
     final byFactory = <String, int>{};
     for (final entry in factories.entries) {

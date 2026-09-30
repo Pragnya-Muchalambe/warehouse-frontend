@@ -4,7 +4,7 @@ import 'package:warehouse_poc/models/viewer_request.dart';
 import 'package:warehouse_poc/services/request_service.dart';
 
 void main() {
-  test('pending request counts parse required module and factory values', () {
+  test('pending request counts parse provided module and factory values', () {
     final counts = PendingRequestCounts.fromJson({
       'total': 4,
       'byModule': {'DEPOT': 1, 'SLEEPER': 3},
@@ -18,25 +18,108 @@ void main() {
     expect(counts.factory('unrelated'), 0);
   });
 
-  test('malformed pending request counts never become zero', () {
+  test('empty module and factory maps represent zero counts', () {
+    final counts = PendingRequestCounts.fromJson({
+      'total': 0,
+      'byModule': <String, dynamic>{},
+      'byFactory': <String, dynamic>{},
+    });
+
+    expect(counts.total, 0);
+    expect(counts.depot, 0);
+    expect(counts.sleeper, 0);
+  });
+
+  test('DEPOT-only pending count defaults Sleeper to zero', () {
+    final counts = PendingRequestCounts.fromJson({
+      'total': 2,
+      'byModule': {'DEPOT': 2},
+      'byFactory': <String, dynamic>{},
+    });
+
+    expect(counts.depot, 2);
+    expect(counts.sleeper, 0);
+  });
+
+  test('SLEEPER-only pending count defaults Depot to zero', () {
+    final counts = PendingRequestCounts.fromJson({
+      'total': 3,
+      'byModule': {'SLEEPER': 3},
+      'byFactory': {'factory-a': 3},
+    });
+
+    expect(counts.depot, 0);
+    expect(counts.sleeper, 3);
+    expect(counts.factory('factory-a'), 3);
+  });
+
+  test('factory-filtered pending count accepts a sparse module map', () {
+    final counts = PendingRequestCounts.fromJson({
+      'total': 1,
+      'byModule': {'SLEEPER': 1},
+      'byFactory': {'factory-id': 1},
+    });
+
+    expect(counts.total, 1);
+    expect(counts.factory('factory-id'), 1);
+  });
+
+  test('negative pending counts are rejected', () {
     for (final value in [
-      {'total': 0, 'byModule': <String, int>{}, 'byFactory': {}},
+      {'total': -1, 'byModule': <String, dynamic>{}, 'byFactory': {}},
       {
         'total': 1,
-        'byModule': {'DEPOT': 1, 'SLEEPER': 0},
-        'byFactory': {'factory': -1},
+        'byModule': {'DEPOT': -1},
+        'byFactory': {}
       },
       {
-        'total': '1',
-        'byModule': {'DEPOT': 1, 'SLEEPER': 0},
-        'byFactory': {},
+        'total': 1,
+        'byModule': {},
+        'byFactory': {'factory': -1}
       },
     ]) {
-      expect(
-        () => PendingRequestCounts.fromJson(value),
-        throwsFormatException,
-      );
+      expect(() => PendingRequestCounts.fromJson(value), throwsFormatException);
     }
+  });
+
+  test('non-integer pending counts are rejected', () {
+    for (final value in [
+      {'total': '1', 'byModule': <String, dynamic>{}, 'byFactory': {}},
+      {
+        'total': 1,
+        'byModule': {'DEPOT': 1.5},
+        'byFactory': {}
+      },
+      {
+        'total': 1,
+        'byModule': {},
+        'byFactory': {'factory': '1'}
+      },
+    ]) {
+      expect(() => PendingRequestCounts.fromJson(value), throwsFormatException);
+    }
+  });
+
+  test('missing pending count maps are rejected', () {
+    expect(
+      () => PendingRequestCounts.fromJson({'total': 0, 'byFactory': {}}),
+      throwsFormatException,
+    );
+    expect(
+      () => PendingRequestCounts.fromJson({'total': 0, 'byModule': {}}),
+      throwsFormatException,
+    );
+  });
+
+  test('unsupported pending-count module keys are rejected', () {
+    expect(
+      () => PendingRequestCounts.fromJson({
+        'total': 1,
+        'byModule': {'UNKNOWN': 1},
+        'byFactory': {},
+      }),
+      throwsFormatException,
+    );
   });
 
   test('request timestamps reject missing, invalid, and timezone-free values',

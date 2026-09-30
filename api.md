@@ -312,8 +312,10 @@ Optional query parameters are `module=DEPOT|SLEEPER` and `factoryId`.
 }
 ```
 
-Counts are already role- and scope-filtered. Missing or malformed required
-count fields are response errors, not zero.
+Counts are already role- and scope-filtered. `byModule` is sparse: omitted
+`DEPOT` or `SLEEPER` entries mean zero. The `byModule` and `byFactory` objects,
+`total`, and any provided count values are required and malformed responses are
+errors, not zero.
 
 ## Stock Semantics
 
