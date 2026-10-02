@@ -47,6 +47,16 @@ app.*.map.json
 # Local development backend — never commit
 /dev_mock_backend/
 
+# Local environment and database files
+.venv/
+.venv*/
+.storage/
+.env
+.env.*
+!.env.example
+warehouse.db
+*.db
+
 # Python/test caches
 .pytest_cache/
 **/__pycache__/
@@ -62,6 +72,7 @@ app.*.map.json
 # Local reports, patches and logs
 *.patch
 *.log
+*REPORT*.md
 /FINAL_FRONTEND_CHANGES_REPORT.md
 /FRONTEND_CHANGES_REPORT.md
 /NEW_ISSUES_FIX_REPORT.md
